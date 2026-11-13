@@ -46,9 +46,29 @@ final class BiliClient {
     record Quality(int id, String label, String codec, List<String> urls) {}
     record Streams(String title, String referer, long aid, long cid, int seconds, String cover,
                    List<Quality> video, List<String> audio) {}
+    record Video(String title, String link, long cid) {
+        boolean matches(Streams streams) {
+            return streams != null && (cid > 0 ? cid == streams.cid() : link.equals(streams.referer()));
+        }
+    }
+    record Collection(String key, String title, List<Video> videos) {}
+    record Inspection(Streams streams, List<Collection> collections) {}
 
     static Streams resolve(String input, String cookie, ExportTask task) throws Exception {
+        return resolve(videoLink(input, task), cookie, task, null);
+    }
+
+    static Inspection inspect(String input, String cookie, ExportTask task) throws Exception {
         Uri link = videoLink(input, task);
+        if ("space.bilibili.com".equalsIgnoreCase(link.getHost())) {
+            return new Inspection(null, java.util.Collections.singletonList(BiliCollections.load(link, cookie, task)));
+        }
+        List<Collection> collections = new ArrayList<>();
+        Streams streams = resolve(link, cookie, task, collections);
+        return new Inspection(streams, collections);
+    }
+
+    private static Streams resolve(Uri link, String cookie, ExportTask task, List<Collection> collections) throws Exception {
         Matcher path = VIDEO_PATH.matcher(link.getPath() == null ? "" : link.getPath());
         if (!path.matches() || !ID.matcher(path.group(1)).matches()) {
             throw new IOException("请输入普通投稿的 BV/AV 号或视频链接。");
@@ -69,6 +89,7 @@ final class BiliClient {
         JSONObject page = pages == null ? null : pages.optJSONObject(part - 1);
         if (page == null) throw new IOException("没有找到链接指定的分集。");
         String bvid = info.getString("bvid");
+        if (collections != null) BiliCollections.addRelated(info, pages, collections);
         String referer = SITE + "/video/" + bvid + "/?p=" + part;
         String title = info.getString("title");
         if (pages.length() > 1) title += " - P" + part + " " + page.optString("part");
@@ -112,7 +133,8 @@ final class BiliClient {
             Uri link = Uri.parse(match.group()).buildUpon().scheme("https").build();
             String host = link.getHost();
             if ("b23.tv".equalsIgnoreCase(host)) return expand(link, task);
-            if (isBiliHost(host) && link.getPath() != null && link.getPath().startsWith("/video/")) {
+            if (isBiliHost(host) && link.getPath() != null && (link.getPath().startsWith("/video/")
+                    || ("space.bilibili.com".equalsIgnoreCase(host) && BiliCollections.matches(link)))) {
                 return link;
             }
         }
@@ -274,7 +296,7 @@ final class BiliClient {
         }
     }
 
-    private static JSONObject requireData(JSONObject json, String action) throws IOException {
+    static JSONObject requireData(JSONObject json, String action) throws IOException {
         JSONObject data = json.optJSONObject("data");
         int code = json.optInt("code", -1);
         if (code == 0 && data != null) return data;

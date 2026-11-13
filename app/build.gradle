@@ -10,8 +10,10 @@ android {
         applicationId 'local.bilimp4.app'
         minSdk 29
         targetSdk 36
-        versionCode 7
-        versionName '0.5.0'
+        versionCode 10
+        versionName '0.6.2'
+        buildConfigField 'String', 'UPDATE_FEED_URL',
+                groovy.json.JsonOutput.toJson(providers.gradleProperty('bilimp4UpdateFeed').getOrElse(''))
     }
 
     compileOptions {

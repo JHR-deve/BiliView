@@ -120,7 +120,8 @@ final class SharedCache {
 
     private static CacheEntry entry(ContentResolver resolver, String title, String folder, Child video, Child audio,
                                     JSONObject info, Child xml, Child pb) {
-        return new CacheEntry(title, folder, source(resolver, video), source(resolver, audio),
+        return new CacheEntry("shared:" + video.uri() + "\n" + audio.uri(), title, folder,
+                source(resolver, video), source(resolver, audio),
                 CacheEntry.aid(info), CacheEntry.cid(info), source(resolver, xml), source(resolver, pb));
     }
 

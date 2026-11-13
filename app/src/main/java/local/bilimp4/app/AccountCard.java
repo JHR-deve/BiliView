@@ -76,7 +76,7 @@ final class AccountCard implements AutoCloseable {
         title.setEllipsize(TextUtils.TruncateAt.END);
         title.setTextColor(foreground);
         labels.addView(title);
-        info = activity.text("登录后可选择账号可用画质", 12, true);
+        info = activity.text(activity.getString(R.string.account_guest_hint), 12, true);
         info.setTextColor(foreground);
         labels.addView(info, activity.spacing(3));
         LinearLayout.LayoutParams labelSize = new LinearLayout.LayoutParams(0, -2, 1);
@@ -89,6 +89,14 @@ final class AccountCard implements AutoCloseable {
         row.addView(action, new LinearLayout.LayoutParams(-2, -2));
         card.addView(row);
         panel.addView(card);
+        MaterialButton help = activity.button(activity.getString(R.string.account_help_title),
+                androidx.appcompat.R.attr.borderlessButtonStyle);
+        help.setOnClickListener(view -> new MaterialAlertDialogBuilder(activity)
+                .setTitle(R.string.account_help_title)
+                .setMessage(R.string.account_help_body)
+                .setPositiveButton(R.string.account_help_done, null)
+                .show());
+        panel.addView(help, new LinearLayout.LayoutParams(-2, -2));
         refresh();
     }
 
@@ -176,7 +184,7 @@ final class AccountCard implements AutoCloseable {
         avatar.setVisibility(View.GONE);
         if (account == null) {
             title.setText(next == null ? "游客模式" : "B 站账号");
-            info.setText(message == null ? "登录后可选择账号可用画质" : message);
+            info.setText(message == null ? activity.getString(R.string.account_guest_hint) : message);
         } else {
             title.setText(account.name());
             info.setText("UID " + account.uid() + " · Lv." + account.level()

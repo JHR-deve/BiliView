@@ -34,15 +34,16 @@ import java.util.List;
 @OptIn(markerClass = UnstableApi.class)
 final class ExportTask {
     static final String FOLDER = "BiliMP4";
-    private static final String PATH = Environment.DIRECTORY_DOWNLOADS + "/" + FOLDER;
+    static final String PATH = Environment.DIRECTORY_DOWNLOADS + "/" + FOLDER;
     private static final int BUFFER_SIZE = 128 * 1024;
     private final Context context;
+    private final String folder;
     private final Progress listener;
     private volatile boolean cancelled;
     private long lastUpdate;
     private String lastStage;
 
-    record Result(Uri uri, String name, boolean burned, String note) {}
+    record Result(Uri uri, String name, boolean burned, String note, String folder) {}
 
     interface Progress {
         void update(String stage, int percent);
@@ -58,8 +59,9 @@ final class ExportTask {
 
     static final class Cancelled extends IOException {}
 
-    ExportTask(Context context, Progress listener) {
+    ExportTask(Context context, String folder, Progress listener) {
         this.context = context.getApplicationContext();
+        this.folder = folder;
         this.listener = listener;
     }
 
@@ -83,6 +85,11 @@ final class ExportTask {
     BiliClient.Streams prepareLink(String link, String cookie) throws Exception {
         progress("正在解析视频链接", -1);
         return BiliClient.resolve(link, cookie, this);
+    }
+
+    BiliClient.Inspection inspectLink(String link, String cookie) throws Exception {
+        progress("正在解析视频或合集", -1);
+        return BiliClient.inspect(link, cookie, this);
     }
 
     Result fromLink(BiliClient.Streams streams, BiliClient.Quality quality, DanmakuStyle.Options options,
@@ -260,7 +267,7 @@ final class ExportTask {
         String name = fileName(title);
         values.put(MediaStore.Downloads.DISPLAY_NAME, name);
         values.put(MediaStore.Downloads.MIME_TYPE, "video/mp4");
-        values.put(MediaStore.Downloads.RELATIVE_PATH, PATH);
+        values.put(MediaStore.Downloads.RELATIVE_PATH, folder == null ? PATH : PATH + "/" + folder);
         values.put(MediaStore.Downloads.IS_PENDING, 1);
         Uri uri = resolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
         if (uri == null) throw new IOException("无法创建下载文件。");
@@ -276,7 +283,7 @@ final class ExportTask {
             values.put(MediaStore.Downloads.IS_PENDING, 0);
             if (resolver.update(uri, values, null, null) != 1) throw new IOException("无法发布下载文件。");
             published = true;
-            return new Result(uri, displayName(resolver, uri, name), burned, note);
+            return new Result(uri, displayName(resolver, uri, name), burned, note, folder);
         } finally {
             if (!published) resolver.delete(uri, null, null);
         }
@@ -344,13 +351,25 @@ final class ExportTask {
         return fallback;
     }
 
-    private static String fileName(String title) {
-        String name = title.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").trim();
+    static String fileName(String title) {
+        String name = safeName(title);
         if (name.toLowerCase(Locale.ROOT).endsWith(".mp4")) name = name.substring(0, name.length() - 4);
         if (name.codePointCount(0, name.length()) > 60) {
             name = name.substring(0, name.offsetByCodePoints(0, 60));
         }
         if (name.isEmpty() || name.equals(".") || name.equals("..")) name = "B站视频";
         return name + ".mp4";
+    }
+
+    static String folderName(String title) {
+        String name = safeName(title).replaceAll("^[. ]+|[. ]+$", "");
+        if (name.codePointCount(0, name.length()) > 48) {
+            name = name.substring(0, name.offsetByCodePoints(0, 48)).stripTrailing();
+        }
+        return name.isEmpty() ? "B站合集" : name;
+    }
+
+    private static String safeName(String title) {
+        return title.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_").trim();
     }
 }

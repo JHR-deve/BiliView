@@ -8,7 +8,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
-record CacheEntry(String title, String location, ExportTask.Source video, ExportTask.Source audio,
+record CacheEntry(String key, String title, String location, ExportTask.Source video, ExportTask.Source audio,
                   long aid, long cid, ExportTask.Source xml, ExportTask.Source protobuf) {
     static final String XML = "danmaku.xml";
     static final String PROTOBUF = "danmaku.pb";

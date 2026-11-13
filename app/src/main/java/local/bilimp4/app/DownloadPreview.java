@@ -16,12 +16,18 @@ import com.google.android.material.imageview.ShapeableImageView;
 import com.google.android.material.shape.ShapeAppearanceModel;
 
 import java.util.Locale;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 final class DownloadPreview implements AutoCloseable {
     interface Download {
         void start(BiliClient.Streams streams, BiliClient.Quality quality, DanmakuStyle.Options options);
+    }
+
+    interface BatchDownload {
+        void start(BiliClient.Collection collection, List<BiliClient.Video> videos,
+                   int quality, DanmakuStyle.Options options);
     }
 
     private final MainActivity activity;
@@ -33,12 +39,16 @@ final class DownloadPreview implements AutoCloseable {
     private final MaterialButton choose;
     private final DanmakuControls danmaku;
     private final MaterialButton download;
+    private final LinearLayout collections;
+    private final LinearLayout summary;
+    private final BatchDownload onBatch;
     private BiliClient.Streams streams;
     private int selected;
     private boolean closed;
 
-    DownloadPreview(MainActivity activity, LinearLayout panel, Download onDownload) {
+    DownloadPreview(MainActivity activity, LinearLayout panel, Download onDownload, BatchDownload onBatch) {
         this.activity = activity;
+        this.onBatch = onBatch;
         card = new MaterialCardView(activity);
         card.setRadius(activity.dp(24));
         card.setCardElevation(0);
@@ -47,7 +57,7 @@ final class DownloadPreview implements AutoCloseable {
         LinearLayout body = activity.column();
         body.setPadding(activity.dp(16), activity.dp(16), activity.dp(16), activity.dp(12));
 
-        LinearLayout summary = new LinearLayout(activity);
+        summary = new LinearLayout(activity);
         summary.setGravity(Gravity.CENTER_VERTICAL);
         cover = new ShapeableImageView(activity);
         cover.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -79,22 +89,37 @@ final class DownloadPreview implements AutoCloseable {
             }
         });
         body.addView(download, activity.spacing(10));
+        collections = activity.column();
+        body.addView(collections, activity.spacing(8));
         card.addView(body);
         card.setVisibility(View.GONE);
         panel.addView(card, activity.spacing(16));
     }
 
-    void show(BiliClient.Streams data) {
+    void show(BiliClient.Inspection inspection) {
+        BiliClient.Streams data = inspection.streams();
         streams = data;
         selected = 0;
+        summary.setVisibility(data == null ? View.GONE : View.VISIBLE);
+        choose.setVisibility(data == null ? View.GONE : View.VISIBLE);
+        download.setVisibility(data == null ? View.GONE : View.VISIBLE);
+        collections.removeAllViews();
+        for (BiliClient.Collection collection : inspection.collections()) {
+            String label = collection.key().startsWith("parts:") ? "视频分 P" : collection.title();
+            MaterialButton button = activity.button(label + " · " + collection.videos().size() + " 项",
+                    com.google.android.material.R.attr.materialButtonOutlinedStyle);
+            button.setOnClickListener(view -> openCollection(collection));
+            collections.addView(button);
+        }
+        setBusy(false);
+        card.setVisibility(View.VISIBLE);
+        if (data == null) return;
         cover.setImageDrawable(null);
         cover.setVisibility(View.GONE);
         title.setText(data.title());
         duration.setText(time(data.seconds()));
         duration.setVisibility(data.seconds() > 0 ? View.VISIBLE : View.GONE);
-        setBusy(false);
         updateQuality();
-        card.setVisibility(View.VISIBLE);
         images.execute(() -> {
             Bitmap image = BiliImage.load(data.cover(), 360);
             activity.runOnUiThread(() -> {
@@ -102,6 +127,20 @@ final class DownloadPreview implements AutoCloseable {
                 cover.setImageBitmap(image);
                 cover.setVisibility(View.VISIBLE);
             });
+        });
+    }
+
+    private void openCollection(BiliClient.Collection collection) {
+        int current = -1;
+        for (int i = 0; i < collection.videos().size(); i++) {
+            if (collection.videos().get(i).matches(streams)) {
+                current = i;
+                break;
+            }
+        }
+        BatchPicker.show(activity, collection.title(), collection.videos(), BiliClient.Video::title, current, items -> {
+            int quality = streams == null ? -1 : streams.video().get(selected).id();
+            onBatch.start(collection, items, quality, danmaku.options());
         });
     }
 
@@ -114,6 +153,7 @@ final class DownloadPreview implements AutoCloseable {
         choose.setEnabled(!busy && streams != null && streams.video().size() > 1);
         danmaku.setBusy(busy);
         download.setEnabled(!busy && streams != null);
+        for (int i = 0; i < collections.getChildCount(); i++) collections.getChildAt(i).setEnabled(!busy);
     }
 
     private void chooseQuality() {
@@ -132,7 +172,7 @@ final class DownloadPreview implements AutoCloseable {
 
     private void updateQuality() {
         String label = label(streams.video().get(selected));
-        choose.setText(streams.video().size() > 1 ? "画质  ·  " + label + "  ▾" : label);
+        choose.setText("画质  ·  " + label + (streams.video().size() > 1 ? "  ▾" : ""));
     }
 
     private static String label(BiliClient.Quality quality) {

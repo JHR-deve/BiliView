@@ -57,7 +57,7 @@ final class DanmakuControls {
         settings.setEnabled(!busy && comments.isChecked());
     }
 
-    private static DanmakuStyle.Options loadOptions(MainActivity activity) {
+    static DanmakuStyle.Options loadOptions(MainActivity activity) {
         SharedPreferences preferences = activity.getPreferences(0);
         DanmakuStyle defaults = DanmakuStyle.DEFAULT;
         DanmakuStyle local = new DanmakuStyle(preferences.getInt("danmakuSize", Math.round(defaults.scale() * 100)) / 100f,

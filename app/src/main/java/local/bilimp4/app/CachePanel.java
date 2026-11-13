@@ -26,8 +26,10 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 import rikka.shizuku.Shizuku;
 
@@ -42,14 +44,19 @@ final class CachePanel implements AutoCloseable {
 
     private final MainActivity activity;
     private final Executor worker;
-    private final BiConsumer<CacheEntry, DanmakuStyle.Options> export;
+    private final BiConsumer<List<CacheEntry>, DanmakuStyle.Options> export;
+    private final VideoHistory history;
+    private final Consumer<Uri> open;
     private final MaterialButton scan;
     private final MaterialButton choose;
+    private final MaterialButton batch;
     private final TextView hint;
     private final LinearLayout list;
     private final DanmakuControls danmaku;
     private final List<MaterialButton> exportButtons = new ArrayList<>();
     private final Shizuku.UserServiceArgs service;
+    private List<CacheEntry> entries = List.of();
+    private Map<String, VideoHistory.CacheResult> results = Map.of();
     private Uri folder;
     private CacheReader reader;
     private Access access;
@@ -83,11 +90,13 @@ final class CachePanel implements AutoCloseable {
         }
     };
 
-    CachePanel(MainActivity activity, LinearLayout panel, Executor worker,
-               BiConsumer<CacheEntry, DanmakuStyle.Options> export) {
+    CachePanel(MainActivity activity, LinearLayout panel, Executor worker, VideoHistory history,
+               BiConsumer<List<CacheEntry>, DanmakuStyle.Options> export, Consumer<Uri> open) {
         this.activity = activity;
         this.worker = worker;
         this.export = export;
+        this.history = history;
+        this.open = open;
         String saved = activity.getPreferences(0).getString(FOLDER_KEY, null);
         folder = saved == null ? null : Uri.parse(saved);
         service = new Shizuku.UserServiceArgs(new ComponentName(activity, BiliCacheService.class))
@@ -119,6 +128,9 @@ final class CachePanel implements AutoCloseable {
         panel.addView(hint, activity.spacing(12));
         danmaku = new DanmakuControls(activity, panel, false);
         danmaku.setVisible(false);
+        batch = activity.button("批量转换", com.google.android.material.R.attr.materialButtonOutlinedStyle);
+        batch.setVisibility(TextView.GONE);
+        panel.addView(batch, activity.spacing(8));
         list = activity.column();
         panel.addView(list, activity.spacing(8));
         refreshAccess();
@@ -129,7 +141,10 @@ final class CachePanel implements AutoCloseable {
 
     void setVisible(boolean visible) {
         this.visible = visible;
-        if (visible) refreshAccess();
+        if (visible) {
+            refreshAccess();
+            refreshResults();
+        }
     }
 
     void setBusy(boolean busy) {
@@ -275,7 +290,7 @@ final class CachePanel implements AutoCloseable {
                 for (int i = 0; i < items.length(); i++) {
                     JSONObject item = items.getJSONObject(i);
                     String directory = item.getString("directory");
-                    entries.add(new CacheEntry(item.getString("title"), "B 站离线缓存",
+                    entries.add(new CacheEntry("official:" + directory, item.getString("title"), "B 站离线缓存",
                             () -> openFile(source, directory, false, false), () -> openFile(source, directory, true, false),
                             item.optLong("aid"), item.optLong("cid"),
                             commentSource(source, item.optString("xmlFolder"), false),
@@ -361,9 +376,9 @@ final class CachePanel implements AutoCloseable {
         if (entries != null) {
             loaded = true;
             officialEntries = official;
-            list.removeAllViews();
-            exportButtons.clear();
-            for (CacheEntry entry : entries) list.addView(row(entry), activity.spacing(8));
+            this.entries = entries;
+            results = history.cacheResults(entries);
+            renderEntries();
             danmaku.setVisible(!entries.isEmpty());
         }
         showHint(entries == null || entries.isEmpty() ? empty
@@ -371,12 +386,35 @@ final class CachePanel implements AutoCloseable {
         updateButtons();
     }
 
+    void refreshResults() {
+        if (!visible || closed || entries.isEmpty()) return;
+        Map<String, VideoHistory.CacheResult> updated = history.cacheResults(entries);
+        if (updated.equals(results)) return;
+        results = updated;
+        renderEntries();
+        updateButtons();
+    }
+
+    private void renderEntries() {
+        list.removeAllViews();
+        exportButtons.clear();
+        List<CacheEntry> unconverted = new ArrayList<>();
+        for (CacheEntry entry : entries) {
+            VideoHistory.CacheResult result = results.get(entry.key());
+            if (result == null) unconverted.add(entry);
+            list.addView(row(entry, result), activity.spacing(8));
+        }
+        batch.setVisibility(unconverted.size() > 1 ? TextView.VISIBLE : TextView.GONE);
+        batch.setOnClickListener(view -> BatchPicker.show(activity, "选择要转换的缓存", unconverted,
+                CacheEntry::title, items -> export.accept(items, danmaku.options())));
+    }
+
     private void showHint(String message) {
         hint.setText(message);
         hint.setVisibility(TextView.VISIBLE);
     }
 
-    private MaterialCardView row(CacheEntry entry) {
+    private MaterialCardView row(CacheEntry entry, VideoHistory.CacheResult result) {
         MaterialCardView card = new MaterialCardView(activity);
         card.setCardElevation(0);
         card.setRadius(activity.dp(16));
@@ -392,11 +430,37 @@ final class CachePanel implements AutoCloseable {
         if (!entry.hasDanmakuSource()) location += " · 无弹幕来源";
         labels.addView(activity.text(location, 12, true), activity.spacing(4));
         row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
-        MaterialButton button = activity.button("导出 MP4", androidx.appcompat.R.attr.borderlessButtonStyle);
-        button.setContentDescription("导出 " + entry.title());
-        button.setOnClickListener(view -> export.accept(entry, danmaku.options()));
-        exportButtons.add(button);
-        row.addView(button, new LinearLayout.LayoutParams(-2, -2));
+        LinearLayout actions = activity.column();
+        if (result != null) {
+            TextView status = activity.text(result.confirmed() ? "已转换" : "已有同名 MP4", 13, false);
+            status.setTextColor(activity.color(com.google.android.material.R.attr.colorPrimary));
+            labels.addView(status, activity.spacing(4));
+            MaterialButton openButton = activity.button("打开 MP4", androidx.appcompat.R.attr.borderlessButtonStyle);
+            openButton.setContentDescription("打开 " + entry.title());
+            openButton.setOnClickListener(view -> {
+                open.accept(result.uri());
+                refreshResults();
+            });
+            actions.addView(openButton, new LinearLayout.LayoutParams(-1, -2));
+        }
+        boolean converted = result != null;
+        MaterialButton convert = activity.button(converted ? "重新转换" : "导出 MP4",
+                androidx.appcompat.R.attr.borderlessButtonStyle);
+        convert.setContentDescription((converted ? "重新转换 " : "导出 ") + entry.title());
+        convert.setOnClickListener(view -> {
+            if (!converted) {
+                export.accept(List.of(entry), danmaku.options());
+                return;
+            }
+            new MaterialAlertDialogBuilder(activity).setTitle("重新转换？")
+                    .setMessage("会另存一份 MP4。")
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton("重新转换", (dialog, which) -> export.accept(List.of(entry), danmaku.options()))
+                    .show();
+        });
+        exportButtons.add(convert);
+        actions.addView(convert, new LinearLayout.LayoutParams(-1, -2));
+        row.addView(actions, new LinearLayout.LayoutParams(-2, -2));
         card.addView(row);
         return card;
     }
@@ -405,6 +469,7 @@ final class CachePanel implements AutoCloseable {
         boolean enabled = !busy && !scanning;
         scan.setEnabled(enabled);
         choose.setEnabled(enabled);
+        batch.setEnabled(enabled && (!officialEntries || access == Access.READY));
         danmaku.setBusy(!enabled);
         for (MaterialButton button : exportButtons) {
             button.setEnabled(enabled && (!officialEntries || access == Access.READY));

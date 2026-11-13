@@ -8,6 +8,7 @@ import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputType;
@@ -17,6 +18,7 @@ import android.view.View;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.window.OnBackInvokedDispatcher;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -38,6 +40,7 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.color.DynamicColors;
 import com.google.android.material.color.MaterialColors;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.navigation.NavigationView;
 import com.google.android.material.progressindicator.LinearProgressIndicator;
 import com.google.android.material.textfield.TextInputEditText;
@@ -47,6 +50,10 @@ import org.json.JSONException;
 
 import java.net.SocketTimeoutException;
 import java.net.UnknownHostException;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
@@ -59,7 +66,8 @@ public final class MainActivity extends AppCompatActivity {
     private ScrollView scroll;
     private LinearLayout downloadPanel;
     private LinearLayout importPanel;
-    private LinearLayout aboutPanel;
+    private AboutPanel aboutPanel;
+    private LinearLayout historyPage;
     private LinearLayout statusArea;
     private int page = R.id.nav_download;
     private TextInputEditText link;
@@ -76,11 +84,18 @@ public final class MainActivity extends AppCompatActivity {
     private LinearLayout resultActions;
     private ExportTask current;
     private ExportTask.Result lastResult;
+    private VideoHistory history;
+    private HistoryPanel records;
+    private final ArrayDeque<Job> pending = new ArrayDeque<>();
+    private Job running;
 
     @Override
     protected void onCreate(Bundle state) {
         DynamicColors.applyToActivityIfAvailable(this);
         super.onCreate(state);
+        history = new VideoHistory(this);
+        history.recover();
+        history.importPrevious(this);
         createScreen();
         if (state == null) {
             acceptSharedLink(getIntent());
@@ -91,7 +106,7 @@ public final class MainActivity extends AppCompatActivity {
             Uri uri = state.getParcelable("resultUri");
             if (uri != null) {
                 showResult(new ExportTask.Result(uri, state.getString("resultName"),
-                        state.getBoolean("resultBurned"), state.getString("resultNote")));
+                        state.getBoolean("resultBurned"), state.getString("resultNote"), state.getString("resultFolder")));
             }
         }
         updateButtons();
@@ -136,14 +151,23 @@ public final class MainActivity extends AppCompatActivity {
 
         downloadPanel = createDownloadPanel();
         importPanel = column();
-        caches = new CachePanel(this, importPanel, worker, (entry, options) -> {
+        caches = new CachePanel(this, importPanel, worker, history, (entries, options) -> {
             String cookie = account.cookie();
-            run(task -> task.fromFiles(entry, options, cookie));
-        });
+            List<Request> requests = new ArrayList<>();
+            for (CacheEntry entry : entries) {
+                requests.add(new Request(entry.title(), VideoHistory.CONVERSION, null, entry.key(), null,
+                        task -> task.fromFiles(entry, options, cookie)));
+            }
+            enqueue(requests, requests.size() > 1);
+        }, uri -> openVideo(uri, false));
         content.addView(downloadPanel);
         content.addView(importPanel);
-        aboutPanel = AboutPanel.create(this);
-        content.addView(aboutPanel);
+        historyPage = column();
+        records = new HistoryPanel(this, historyPage, this::openVideo, this::cancelJob, this::confirmDeleteVideo,
+                this::retryDownload);
+        content.addView(historyPage);
+        aboutPanel = new AboutPanel(this);
+        content.addView(aboutPanel.view());
         statusArea = column();
         statusArea.addView(createStatus(), spacing(20));
         content.addView(statusArea);
@@ -163,22 +187,23 @@ public final class MainActivity extends AppCompatActivity {
         });
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
-                if (drawer.isDrawerVisible(GravityCompat.START)) drawer.closeDrawer(GravityCompat.START);
-                else if (page != R.id.nav_download) selectPage(R.id.nav_download);
-                else {
-                    setEnabled(false);
-                    try {
-                        getOnBackPressedDispatcher().onBackPressed();
-                    } finally {
-                        setEnabled(true);
-                    }
-                }
+                navigateBack();
             }
         });
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::navigateBack);
+        }
         selectPage(R.id.nav_download);
         setContentView(drawer);
         root.requestFocus();
         ViewCompat.requestApplyInsets(drawer);
+    }
+
+    private void navigateBack() {
+        if (drawer.isDrawerVisible(GravityCompat.START)) drawer.closeDrawer(GravityCompat.START);
+        else if (page != R.id.nav_download) selectPage(R.id.nav_download);
+        else finish();
     }
 
     private NavigationView createNavigation() {
@@ -216,7 +241,7 @@ public final class MainActivity extends AppCompatActivity {
         });
         TextInputLayout field = new TextInputLayout(this, null,
                 com.google.android.material.R.attr.textInputOutlinedStyle);
-        field.setHint("视频链接或 BV 号");
+        field.setHint("视频、合集链接或 BV 号");
         field.setBoxCornerRadii(dp(16), dp(16), dp(16), dp(16));
         link = new TextInputEditText(field.getContext());
         link.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
@@ -235,7 +260,7 @@ public final class MainActivity extends AppCompatActivity {
             String input = link.getText().toString().trim();
             if (input.isEmpty()) return;
             String cookie = account.cookie();
-            run(task -> task.prepareLink(input, cookie), data -> {
+            run(task -> task.inspectLink(input, cookie), data -> {
                 statusCard.setVisibility(View.GONE);
                 preview.show(data);
             });
@@ -246,8 +271,11 @@ public final class MainActivity extends AppCompatActivity {
         panel.addView(actions, spacing(12));
         preview = new DownloadPreview(this, panel, (streams, quality, options) -> {
             String cookie = account.cookie();
-            run(task -> task.fromLink(streams, quality, options, cookie));
-        });
+            var download = new VideoHistory.Download(streams.referer(), quality.id(), options != null);
+            Request request = new Request(streams.title(), VideoHistory.DOWNLOAD, null, null, download,
+                    task -> task.fromLink(streams, quality, options, cookie));
+            enqueue(java.util.Collections.singletonList(request), false);
+        }, this::queueVideos);
         link.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
@@ -308,11 +336,13 @@ public final class MainActivity extends AppCompatActivity {
         page = destination;
         downloadPanel.setVisibility(page == R.id.nav_download ? View.VISIBLE : View.GONE);
         importPanel.setVisibility(page == R.id.nav_cache ? View.VISIBLE : View.GONE);
-        aboutPanel.setVisibility(page == R.id.nav_about ? View.VISIBLE : View.GONE);
-        statusArea.setVisibility(page == R.id.nav_about ? View.GONE : View.VISIBLE);
+        aboutPanel.view().setVisibility(page == R.id.nav_about ? View.VISIBLE : View.GONE);
+        historyPage.setVisibility(page == R.id.nav_history ? View.VISIBLE : View.GONE);
+        statusArea.setVisibility(page == R.id.nav_about || page == R.id.nav_history ? View.GONE : View.VISIBLE);
         navigation.setCheckedItem(page);
         toolbar.setTitle(navigation.getMenu().findItem(page).getTitle());
         caches.setVisible(page == R.id.nav_cache);
+        refreshHistory();
     }
 
     private void pasteLink() {
@@ -349,8 +379,85 @@ public final class MainActivity extends AppCompatActivity {
         T run(ExportTask task) throws Exception;
     }
 
-    private void run(Operation<ExportTask.Result> operation) {
-        run(operation, this::showResult);
+    private record Request(String title, String source, VideoHistory.Folder folder, String cacheKey,
+                           VideoHistory.Download download, Operation<ExportTask.Result> operation) {}
+    private record Job(long id, Request request) {}
+
+    private void queueVideos(BiliClient.Collection collection, List<BiliClient.Video> videos, int preferredQuality,
+                             DanmakuStyle.Options options) {
+        String cookie = account.cookie();
+        VideoHistory.Folder folder = history.folderFor(collection);
+        List<Request> requests = new ArrayList<>();
+        for (BiliClient.Video video : videos) {
+            var download = new VideoHistory.Download(video.link(), preferredQuality, options != null);
+            requests.add(downloadRequest(video.title(), folder, download, options, cookie));
+        }
+        enqueue(requests, true);
+    }
+
+    private Request downloadRequest(String title, VideoHistory.Folder folder, VideoHistory.Download download,
+                                    DanmakuStyle.Options options, String cookie) {
+        return new Request(title, VideoHistory.DOWNLOAD, folder, null, download, task -> {
+            BiliClient.Streams streams = task.prepareLink(download.link(), cookie);
+            List<BiliClient.Quality> choices = streams.video();
+            BiliClient.Quality quality = download.quality() <= 0 ? choices.get(0) : choices.stream()
+                    .filter(choice -> choice.id() <= download.quality()).findFirst().orElse(choices.get(choices.size() - 1));
+            return task.fromLink(streams, quality, options, cookie);
+        });
+    }
+
+    private void retryDownload(VideoHistory.Entry entry) {
+        if (!history.requeue(entry)) return;
+        VideoHistory.Download download = entry.download();
+        DanmakuStyle.Options options = download.danmaku() ? DanmakuControls.loadOptions(this) : null;
+        Request request = downloadRequest(entry.title(), entry.folder(), download, options, account.cookie());
+        pending.add(new Job(entry.id(), request));
+        if (current == null) startNext();
+        else refreshHistory();
+    }
+
+    private void enqueue(List<Request> requests, boolean showQueue) {
+        if (current != null || requests.isEmpty()) return;
+        for (Request request : requests) {
+            pending.add(new Job(history.enqueue(request.title(), request.source(), request.folder(),
+                    request.cacheKey(), request.download()), request));
+        }
+        if (showQueue) selectPage(R.id.nav_history);
+        startNext();
+    }
+
+    private void startNext() {
+        running = pending.poll();
+        if (running == null) return;
+        Job job = running;
+        history.progress(job.id(), "正在准备", -1);
+        refreshHistory();
+        run(job.request().operation(), result -> {
+            history.complete(job.id(), result);
+            caches.refreshResults();
+            showResult(result);
+        });
+    }
+
+    private void cancelJob(long id) {
+        if (running != null && running.id() == id && current != null) {
+            current.cancel();
+            cancel.setEnabled(false);
+            status.setText("正在取消");
+            records.updateProgress(id, "正在取消", -1);
+            return;
+        }
+        for (Iterator<Job> jobs = pending.iterator(); jobs.hasNext(); ) {
+            if (jobs.next().id() != id) continue;
+            jobs.remove();
+            history.end(id, VideoHistory.State.CANCELLED, null);
+            refreshHistory();
+            break;
+        }
+    }
+
+    private void refreshHistory() {
+        if (page == R.id.nav_history) records.show(history.entries());
     }
 
     private <T> void run(Operation<T> operation, Consumer<T> onComplete) {
@@ -367,23 +474,57 @@ public final class MainActivity extends AppCompatActivity {
         cancel.setVisibility(View.VISIBLE);
         cancel.setEnabled(true);
         showProgress("正在准备", -1);
-        ExportTask task = new ExportTask(this, (stage, percent) -> runOnUiThread(() -> {
-            if (current != null && cancel.isEnabled()) showProgress(stage, percent);
+        Job job = running;
+        VideoHistory.Folder folder = job == null ? null : job.request().folder();
+        ExportTask task = new ExportTask(this, folder == null ? null : folder.directory(), (stage, percent) -> runOnUiThread(() -> {
+            if (current == null || !cancel.isEnabled()) return;
+            showProgress(stage, percent);
+            if (job != null) {
+                records.updateProgress(job.id(), stage, percent);
+                // Persist stages and coarse progress, leaving frame-by-frame updates in the UI.
+                if (!stage.equals(historyStage) || Math.floorDiv(percent, 10) != Math.floorDiv(historyPercent, 10)) {
+                    history.progress(job.id(), stage, percent);
+                    historyStage = stage;
+                    historyPercent = percent;
+                }
+            }
         }));
+        historyStage = "";
+        historyPercent = -1;
         current = task;
         updateButtons();
         worker.execute(() -> {
             try {
                 T result = operation.run(task);
                 runOnUiThread(() -> {
-                    if (finishTask(task)) onComplete.accept(result);
+                    if (!finishTask(task)) return;
+                    onComplete.accept(result);
+                    advance(job);
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
-                    if (finishTask(task)) showFailure(error);
+                    if (!finishTask(task)) return;
+                    showFailure(error);
+                    if (job != null) {
+                        boolean cancelled = !cancel.isEnabled() || error instanceof ExportTask.Cancelled;
+                        history.end(job.id(), cancelled ? VideoHistory.State.CANCELLED : VideoHistory.State.FAILED,
+                                cancelled ? null : errorMessage(error));
+                    }
+                    advance(job);
                 });
             }
         });
+    }
+
+    private String historyStage;
+    private int historyPercent;
+
+    private void advance(Job job) {
+        if (job != null) {
+            running = null;
+            refreshHistory();
+        }
+        startNext();
     }
 
     private void showProgress(String stage, int percent) {
@@ -427,7 +568,9 @@ public final class MainActivity extends AppCompatActivity {
         statusCard.setVisibility(View.VISIBLE);
         status.setText(result.burned() ? "已保存弹幕 MP4" : "已保存 MP4");
         detail.setVisibility(View.VISIBLE);
-        String summary = "下载 / " + ExportTask.FOLDER + "\n" + result.name();
+        String location = "下载 / " + ExportTask.FOLDER;
+        if (result.folder() != null) location += " / " + result.folder();
+        String summary = location + "\n" + result.name();
         if (result.note() != null) summary += "\n" + result.note();
         detail.setText(summary);
         progress.setVisibility(View.GONE);
@@ -437,6 +580,7 @@ public final class MainActivity extends AppCompatActivity {
                 .putString("recentUri", result.uri().toString())
                 .putString("recentName", result.name())
                 .putBoolean("recentBurned", result.burned())
+                .putString("recentFolder", result.folder())
                 .remove("recentComments")
                 .apply();
     }
@@ -452,12 +596,53 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         showResult(new ExportTask.Result(uri, preferences.getString("recentName", "已下载的视频"),
-                preferences.getBoolean("recentBurned", false), null));
+                preferences.getBoolean("recentBurned", false), null, preferences.getString("recentFolder", null)));
     }
 
     private void openResult(boolean share) {
         if (lastResult == null) return;
-        Uri uri = lastResult.uri();
+        openVideo(lastResult.uri(), share);
+    }
+
+    private void confirmDeleteVideo(VideoHistory.Entry entry) {
+        var dialog = new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.history_delete_title)
+                .setMessage(getString(Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                        ? R.string.history_delete_message : R.string.history_delete_permanent_message, entry.title()))
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.history_delete, (window, which) -> deleteVideo(entry))
+                .show();
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+                .setTextColor(color(com.google.android.material.R.attr.colorError));
+    }
+
+    private void deleteVideo(VideoHistory.Entry entry) {
+        if (!history.deleteCompleted(entry)) {
+            Toast.makeText(this, R.string.history_delete_failed, Toast.LENGTH_SHORT).show();
+            refreshHistory();
+            return;
+        }
+        if (lastResult != null && entry.uri().equals(lastResult.uri())) {
+            lastResult = null;
+            statusCard.setVisibility(View.GONE);
+        }
+        var preferences = getPreferences(MODE_PRIVATE);
+        if (entry.uri().toString().equals(preferences.getString("recentUri", null))) {
+            preferences.edit().remove("recentUri").remove("recentName")
+                    .remove("recentBurned").remove("recentFolder").apply();
+        }
+        caches.refreshResults();
+        refreshHistory();
+        Toast.makeText(this, Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                ? R.string.history_trashed : R.string.history_deleted, Toast.LENGTH_SHORT).show();
+    }
+
+    private void openVideo(Uri uri, boolean share) {
+        if (!VideoHistory.available(this, uri)) {
+            Toast.makeText(this, "视频文件已移除或无法访问", Toast.LENGTH_SHORT).show();
+            refreshHistory();
+            return;
+        }
         Intent intent = share ? new Intent(Intent.ACTION_SEND).setType("video/mp4")
                 .putExtra(Intent.EXTRA_STREAM, uri) : new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/mp4");
         intent.setClipData(ClipData.newRawUri("MP4", uri));
@@ -470,9 +655,11 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void hideKeyboard() {
+        View focused = getCurrentFocus();
+        if (focused == null) return;
         InputMethodManager keyboard = getSystemService(InputMethodManager.class);
-        if (keyboard != null) keyboard.hideSoftInputFromWindow(link.getWindowToken(), 0);
-        link.clearFocus();
+        if (keyboard != null) keyboard.hideSoftInputFromWindow(focused.getWindowToken(), 0);
+        focused.clearFocus();
     }
 
     private void acceptSharedLink(Intent intent) {
@@ -503,21 +690,32 @@ public final class MainActivity extends AppCompatActivity {
             state.putString("resultName", lastResult.name());
             state.putBoolean("resultBurned", lastResult.burned());
             state.putString("resultNote", lastResult.note());
+            state.putString("resultFolder", lastResult.folder());
         }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (caches != null) caches.refreshAccess();
+        if (caches != null) {
+            caches.refreshAccess();
+            caches.refreshResults();
+        }
+        refreshHistory();
     }
 
     @Override
     protected void onDestroy() {
         if (current != null) current.cancel();
+        current = null;
+        if (aboutPanel != null) aboutPanel.close();
         if (caches != null) caches.close();
         if (account != null) account.close();
         if (preview != null) preview.close();
+        if (history != null) {
+            history.recover();
+            history.close();
+        }
         worker.shutdown();
         super.onDestroy();
     }
