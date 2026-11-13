@@ -82,7 +82,7 @@ APK 位于 app/build/outputs/apk/debug/app-debug.apk。
 
 ### 技术参考与依赖
 
-Android 界面、缓存转换和弹幕烧录流程为本项目独立实现。B 站下载请求和 WBI 签名参考 Mimi Downloader。 [技术参考](https://github.com/stevenjoezhang/bilibili-downloader)
+Android 界面、缓存转换和弹幕烧录流程为本项目独立实现。
 
 主要开源组件包括 AndroidX、Material Components、Media3、Shizuku API、ZXing 和 Protocol Buffers。各组件保留自己的许可证。
 
