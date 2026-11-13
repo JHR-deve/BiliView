@@ -59,7 +59,7 @@ APK 位于 app/build/outputs/apk/debug/app-debug.apk。
   "versionName": "0.6.2",
   "minSdk": 29,
   "notes": "应用更名为 BiliView",
-  "releaseUrl": "https://github.com/JHR-deve/BiliMP4-Android/releases/tag/v0.6.2"
+  "releaseUrl": "https://github.com/JHR-deve/BiliView/releases/tag/v0.6.2"
 }
 ~~~
 
@@ -67,10 +67,14 @@ APK 位于 app/build/outputs/apk/debug/app-debug.apk。
 
 ## 开源说明
 
-项目采用 GPL-3.0，源码存放在独立的 GitHub 私有仓库。 [许可证](LICENSE) · [项目仓库](https://github.com/JHR-deve/BiliMP4-Android)
+项目采用 GPL-3.0，源码存放在独立的 GitHub 私有仓库。 [许可证](LICENSE) · [项目仓库](https://github.com/JHR-deve/BiliView)
 
 ### 技术参考与依赖
 
 Android 界面、缓存转换和弹幕烧录流程为本项目独立实现。B 站下载请求和 WBI 签名参考 Mimi Downloader。 [技术参考](https://github.com/stevenjoezhang/bilibili-downloader)
 
 主要开源组件包括 AndroidX、Material Components、Media3、Shizuku API、ZXing 和 Protocol Buffers。各组件保留自己的许可证。
+
+## 注意
+
+**本程序仅供学习交流，请勿用于非法用途。**
