@@ -49,9 +49,18 @@ APK 位于 app/build/outputs/apk/debug/app-debug.apk。
 
 ## 软件更新
 
-「关于」页显示当前版本、构建编号和本版更新内容。默认从浏览器打开 GitHub Releases。已获仓库权限的用户可登录 GitHub 下载 APK。
+在 BiliView 的「关于 → 检查更新」中可前往 GitHub 发布页，也可以直接打开下方链接。
 
-如需在应用内比较版本，构建时用 `-Pbilimp4UpdateFeed=https://你的更新域名/update.json` 配置一个可直接读取的 HTTPS JSON 地址。更新源返回以下字段。应用比较 `versionCode`，并在设备满足 `minSdk` 时提供更新说明和下载页入口。
+1. 选择标有「Latest」的正式版本，查看该版本的更新说明。
+2. 展开「Assets」，下载扩展名为 `.apk` 的安装包。
+3. 在 Android 上打开 APK，按系统提示安装。已有 BiliView 时，可用同一签名的新版 APK 覆盖安装并保留应用数据。
+
+[查看 GitHub Releases](https://github.com/JHR-deve/BiliView/releases)
+
+<details>
+<summary>维护者配置与发布流程</summary>
+
+构建时可用 `-Pbilimp4UpdateFeed=https://example.com/update.json` 配置 HTTPS 更新源。应用按 `versionCode` 比较版本，检查设备是否满足 `minSdk`，并提供更新说明和下载页入口。
 
 ~~~json
 {
@@ -59,15 +68,17 @@ APK 位于 app/build/outputs/apk/debug/app-debug.apk。
   "versionName": "0.6.2",
   "minSdk": 29,
   "notes": "应用更名为 BiliView",
-  "releaseUrl": "https://github.com/JHR-deve/BiliView/releases/tag/v0.6.2"
+  "releaseUrl": "https://github.com/JHR-deve/BiliView/releases"
 }
 ~~~
 
-发布时递增 `app/build.gradle` 的 `versionCode`，同步更新本版说明，使用与已安装版本一致的签名证书构建 APK。先把签名 APK 上传到对应 Release，再更新 JSON。APK 由用户下载后通过系统安装器覆盖安装。设备上的调试包使用原调试证书才能覆盖更新。
+发布时递增 `app/build.gradle` 中的 `versionCode`，更新版本说明，并沿用上一版的签名证书。先发布带签名 APK 的 Release，再更新 JSON，并将 `releaseUrl` 指向对应发布页。
+
+</details>
 
 ## 开源说明
 
-项目采用 GPL-3.0，源码存放在独立的 GitHub 私有仓库。 [许可证](LICENSE) · [项目仓库](https://github.com/JHR-deve/BiliView)
+项目采用 GPL-3.0。 [许可证](LICENSE) · [项目仓库](https://github.com/JHR-deve/BiliView)
 
 ### 技术参考与依赖
 
