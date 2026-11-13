@@ -15,7 +15,6 @@ import android.text.InputType;
 import android.text.TextWatcher;
 import android.view.Gravity;
 import android.view.View;
-import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.window.OnBackInvokedDispatcher;
@@ -46,13 +45,10 @@ import com.google.android.material.progressindicator.LinearProgressIndicator;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
-import org.json.JSONException;
+import local.bilimp4.app.ExportQueue.Operation;
+import local.bilimp4.app.ExportQueue.Request;
 
-import java.net.SocketTimeoutException;
-import java.net.UnknownHostException;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -77,6 +73,7 @@ public final class MainActivity extends AppCompatActivity {
     private DownloadPreview preview;
     private CachePanel caches;
     private MaterialButton cancel;
+    private MaterialButton background;
     private MaterialCardView statusCard;
     private TextView status;
     private TextView detail;
@@ -86,15 +83,35 @@ public final class MainActivity extends AppCompatActivity {
     private ExportTask.Result lastResult;
     private VideoHistory history;
     private HistoryPanel records;
-    private final ArrayDeque<Job> pending = new ArrayDeque<>();
-    private Job running;
+    private ExportQueue queue;
+    private final ExportQueue.Listener queueListener = new ExportQueue.Listener() {
+        @Override public void changed() {
+            refreshHistory();
+            updateButtons();
+            if (queue.busy() && current == null) showExportProgress();
+        }
+
+        @Override public void progress(long id, String stage, int percent) {
+            records.updateProgress(id, stage, percent);
+            if (current == null) showExportProgress();
+        }
+
+        @Override public void finished(ExportTask.Result result, String failure) {
+            caches.refreshResults();
+            if (result != null) showResult(result);
+            else {
+                statusCard.setVisibility(View.VISIBLE);
+                showFailure(failure);
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle state) {
         DynamicColors.applyToActivityIfAvailable(this);
         super.onCreate(state);
         history = new VideoHistory(this);
-        history.recover();
+        queue = ExportQueue.get(this);
         history.importPrevious(this);
         createScreen();
         if (state == null) {
@@ -110,6 +127,7 @@ public final class MainActivity extends AppCompatActivity {
             }
         }
         updateButtons();
+        if (ExportService.SHOW_HISTORY.equals(getIntent().getAction())) showQueue();
     }
 
     private void createScreen() {
@@ -241,7 +259,7 @@ public final class MainActivity extends AppCompatActivity {
         });
         TextInputLayout field = new TextInputLayout(this, null,
                 com.google.android.material.R.attr.textInputOutlinedStyle);
-        field.setHint("视频、合集链接或 BV 号");
+        field.setHint("视频、番剧、电影或合集链接");
         field.setBoxCornerRadii(dp(16), dp(16), dp(16), dp(16));
         link = new TextInputEditText(field.getContext());
         link.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI
@@ -312,9 +330,15 @@ public final class MainActivity extends AppCompatActivity {
                 current.cancel();
                 cancel.setEnabled(false);
                 status.setText("正在取消");
-            }
+            } else if (queue.runningId() >= 0) queue.cancel(queue.runningId());
         });
-        body.addView(cancel, new LinearLayout.LayoutParams(-2, -2));
+        LinearLayout taskActions = new LinearLayout(this);
+        taskActions.addView(cancel);
+        background = button("后台下载", androidx.appcompat.R.attr.borderlessButtonStyle);
+        background.setOnClickListener(view -> showQueue());
+        background.setVisibility(View.GONE);
+        taskActions.addView(background);
+        body.addView(taskActions);
         resultActions = new LinearLayout(this);
         MaterialButton openVideo = button("打开视频", androidx.appcompat.R.attr.borderlessButtonStyle);
         openVideo.setOnClickListener(view -> openResult(false));
@@ -366,7 +390,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void updateButtons() {
-        boolean idle = current == null;
+        boolean idle = current == null && !queue.busy();
         link.setEnabled(idle);
         paste.setEnabled(idle);
         download.setEnabled(idle && link.getText() != null && !link.getText().toString().trim().isEmpty());
@@ -374,14 +398,6 @@ public final class MainActivity extends AppCompatActivity {
         preview.setBusy(!idle);
         caches.setBusy(!idle);
     }
-
-    private interface Operation<T> {
-        T run(ExportTask task) throws Exception;
-    }
-
-    private record Request(String title, String source, VideoHistory.Folder folder, String cacheKey,
-                           VideoHistory.Download download, Operation<ExportTask.Result> operation) {}
-    private record Job(long id, Request request) {}
 
     private void queueVideos(BiliClient.Collection collection, List<BiliClient.Video> videos, int preferredQuality,
                              DanmakuStyle.Options options) {
@@ -407,90 +423,51 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void retryDownload(VideoHistory.Entry entry) {
-        if (!history.requeue(entry)) return;
+        if (current != null) return;
         VideoHistory.Download download = entry.download();
         DanmakuStyle.Options options = download.danmaku() ? DanmakuControls.loadOptions(this) : null;
         Request request = downloadRequest(entry.title(), entry.folder(), download, options, account.cookie());
-        pending.add(new Job(entry.id(), request));
-        if (current == null) startNext();
-        else refreshHistory();
+        queue.retry(entry, request);
+        requestExportNotifications();
     }
 
     private void enqueue(List<Request> requests, boolean showQueue) {
-        if (current != null || requests.isEmpty()) return;
-        for (Request request : requests) {
-            pending.add(new Job(history.enqueue(request.title(), request.source(), request.folder(),
-                    request.cacheKey(), request.download()), request));
-        }
-        if (showQueue) selectPage(R.id.nav_history);
-        startNext();
-    }
-
-    private void startNext() {
-        running = pending.poll();
-        if (running == null) return;
-        Job job = running;
-        history.progress(job.id(), "正在准备", -1);
-        refreshHistory();
-        run(job.request().operation(), result -> {
-            history.complete(job.id(), result);
-            caches.refreshResults();
-            showResult(result);
-        });
+        if (current != null || queue.busy() || requests.isEmpty()) return;
+        hideKeyboard();
+        queue.enqueue(requests);
+        if (showQueue) showQueue();
+        else revealStatus();
+        requestExportNotifications();
     }
 
     private void cancelJob(long id) {
-        if (running != null && running.id() == id && current != null) {
-            current.cancel();
-            cancel.setEnabled(false);
-            status.setText("正在取消");
-            records.updateProgress(id, "正在取消", -1);
-            return;
-        }
-        for (Iterator<Job> jobs = pending.iterator(); jobs.hasNext(); ) {
-            if (jobs.next().id() != id) continue;
-            jobs.remove();
-            history.end(id, VideoHistory.State.CANCELLED, null);
-            refreshHistory();
-            break;
-        }
+        queue.cancel(id);
     }
 
     private void refreshHistory() {
         if (page == R.id.nav_history) records.show(history.entries());
     }
 
+    private void showQueue() {
+        selectPage(R.id.nav_history);
+        records.expandRunningFolder(queue.runningId());
+    }
+
     private <T> void run(Operation<T> operation, Consumer<T> onComplete) {
-        if (current != null) return;
+        if (current != null || queue.busy()) return;
         hideKeyboard();
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         lastResult = null;
-        statusCard.setVisibility(View.VISIBLE);
-        statusCard.post(() -> statusCard.requestRectangleOnScreen(
-                new Rect(0, 0, statusCard.getWidth(), statusCard.getHeight()), false));
+        revealStatus();
         resultActions.setVisibility(View.GONE);
-        detail.setVisibility(View.VISIBLE);
-        detail.setText("请保持应用打开");
+        detail.setVisibility(View.GONE);
+        background.setVisibility(View.GONE);
         cancel.setVisibility(View.VISIBLE);
         cancel.setEnabled(true);
         showProgress("正在准备", -1);
-        Job job = running;
-        VideoHistory.Folder folder = job == null ? null : job.request().folder();
-        ExportTask task = new ExportTask(this, folder == null ? null : folder.directory(), (stage, percent) -> runOnUiThread(() -> {
+        ExportTask task = new ExportTask(this, null, (stage, percent) -> runOnUiThread(() -> {
             if (current == null || !cancel.isEnabled()) return;
             showProgress(stage, percent);
-            if (job != null) {
-                records.updateProgress(job.id(), stage, percent);
-                // Persist stages and coarse progress, leaving frame-by-frame updates in the UI.
-                if (!stage.equals(historyStage) || Math.floorDiv(percent, 10) != Math.floorDiv(historyPercent, 10)) {
-                    history.progress(job.id(), stage, percent);
-                    historyStage = stage;
-                    historyPercent = percent;
-                }
-            }
         }));
-        historyStage = "";
-        historyPercent = -1;
         current = task;
         updateButtons();
         worker.execute(() -> {
@@ -499,32 +476,42 @@ public final class MainActivity extends AppCompatActivity {
                 runOnUiThread(() -> {
                     if (!finishTask(task)) return;
                     onComplete.accept(result);
-                    advance(job);
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
                     if (!finishTask(task)) return;
-                    showFailure(error);
-                    if (job != null) {
-                        boolean cancelled = !cancel.isEnabled() || error instanceof ExportTask.Cancelled;
-                        history.end(job.id(), cancelled ? VideoHistory.State.CANCELLED : VideoHistory.State.FAILED,
-                                cancelled ? null : errorMessage(error));
-                    }
-                    advance(job);
+                    showFailure(!cancel.isEnabled() || error instanceof ExportTask.Cancelled
+                            ? "已取消" : ExportQueue.errorMessage(error));
                 });
             }
         });
     }
 
-    private String historyStage;
-    private int historyPercent;
+    private void revealStatus() {
+        statusCard.setVisibility(View.VISIBLE);
+        statusCard.post(() -> statusCard.requestRectangleOnScreen(
+                new Rect(0, 0, statusCard.getWidth(), statusCard.getHeight()), false));
+    }
 
-    private void advance(Job job) {
-        if (job != null) {
-            running = null;
-            refreshHistory();
+    private void showExportProgress() {
+        statusCard.setVisibility(View.VISIBLE);
+        resultActions.setVisibility(View.GONE);
+        detail.setVisibility(View.VISIBLE);
+        detail.setText("可切到其他应用，任务会继续处理。");
+        background.setVisibility(View.VISIBLE);
+        cancel.setVisibility(queue.runningId() < 0 ? View.GONE : View.VISIBLE);
+        cancel.setEnabled(!queue.cancelling());
+        showProgress(queue.stage(), queue.percent());
+    }
+
+    private void requestExportNotifications() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED
+                && !getPreferences(MODE_PRIVATE).getBoolean("askedExportNotifications", false)) {
+            getPreferences(MODE_PRIVATE).edit().putBoolean("askedExportNotifications", true).apply();
+            requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 10);
         }
-        startNext();
     }
 
     private void showProgress(String stage, int percent) {
@@ -540,27 +527,19 @@ public final class MainActivity extends AppCompatActivity {
     private boolean finishTask(ExportTask task) {
         if (current != task || isDestroyed()) return false;
         current = null;
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         updateButtons();
         return true;
     }
 
-    private void showFailure(Exception error) {
-        boolean cancelled = !cancel.isEnabled() || error instanceof ExportTask.Cancelled;
+    private void showFailure(String message) {
+        boolean cancelled = "已取消".equals(message);
         status.setText(cancelled ? "已取消" : "处理失败");
         progress.setVisibility(View.GONE);
         cancel.setVisibility(View.GONE);
+        background.setVisibility(View.GONE);
+        resultActions.setVisibility(View.GONE);
         detail.setVisibility(cancelled ? View.GONE : View.VISIBLE);
-        if (!cancelled) detail.setText(errorMessage(error));
-    }
-
-    private String errorMessage(Exception error) {
-        if (error instanceof UnknownHostException || error instanceof SocketTimeoutException) {
-            return "连接 B 站失败，请检查网络后重试。";
-        }
-        if (error instanceof SecurityException) return "无法访问所选文件，请重新选择。";
-        if (error instanceof JSONException) return "B 站接口返回了无法解析的数据，请稍后重试。";
-        return error.getMessage() == null ? "文件处理失败，请检查源文件与可用空间。" : error.getMessage();
+        if (!cancelled) detail.setText(message);
     }
 
     private void showResult(ExportTask.Result result) {
@@ -575,6 +554,7 @@ public final class MainActivity extends AppCompatActivity {
         detail.setText(summary);
         progress.setVisibility(View.GONE);
         cancel.setVisibility(View.GONE);
+        background.setVisibility(View.GONE);
         resultActions.setVisibility(View.VISIBLE);
         getPreferences(MODE_PRIVATE).edit()
                 .putString("recentUri", result.uri().toString())
@@ -622,6 +602,7 @@ public final class MainActivity extends AppCompatActivity {
             refreshHistory();
             return;
         }
+        queue.forget(entry.uri());
         if (lastResult != null && entry.uri().equals(lastResult.uri())) {
             lastResult = null;
             statusCard.setVisibility(View.GONE);
@@ -663,7 +644,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void acceptSharedLink(Intent intent) {
-        if (current == null && Intent.ACTION_SEND.equals(intent.getAction())) {
+        if (current == null && !queue.busy() && Intent.ACTION_SEND.equals(intent.getAction())) {
             CharSequence value = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
             if (value != null) {
                 drawer.closeDrawer(GravityCompat.START);
@@ -677,7 +658,8 @@ public final class MainActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        acceptSharedLink(intent);
+        if (ExportService.SHOW_HISTORY.equals(intent.getAction())) showQueue();
+        else acceptSharedLink(intent);
     }
 
     @Override
@@ -697,11 +679,23 @@ public final class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        queue.observe(queueListener);
         if (caches != null) {
             caches.refreshAccess();
             caches.refreshResults();
         }
-        refreshHistory();
+        if (!queue.busy() && current == null && queue.latest() != null && queue.latest() != lastResult) {
+            showResult(queue.latest());
+        } else if (!queue.busy() && background.getVisibility() == View.VISIBLE && queue.latestFailure() != null) {
+            showFailure(queue.latestFailure());
+        }
+        queueListener.changed();
+    }
+
+    @Override
+    protected void onPause() {
+        queue.unobserve(queueListener);
+        super.onPause();
     }
 
     @Override
@@ -712,10 +706,7 @@ public final class MainActivity extends AppCompatActivity {
         if (caches != null) caches.close();
         if (account != null) account.close();
         if (preview != null) preview.close();
-        if (history != null) {
-            history.recover();
-            history.close();
-        }
+        if (history != null) history.close();
         worker.shutdown();
         super.onDestroy();
     }

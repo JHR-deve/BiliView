@@ -350,7 +350,7 @@ final class CachePanel implements AutoCloseable {
         if (!beginScan()) return;
         worker.execute(() -> {
             try {
-                List<CacheEntry> entries = SharedCache.scan(activity.getContentResolver(), tree);
+                List<CacheEntry> entries = SharedCache.scan(activity.getApplicationContext().getContentResolver(), tree);
                 activity.runOnUiThread(() -> show(entries, "这个文件夹里没有找到能配对的音视频。", false));
             } catch (Exception error) {
                 activity.runOnUiThread(() -> show(null, "无法读取此文件夹，请选择共享子文件夹。"));
@@ -482,12 +482,12 @@ final class CachePanel implements AutoCloseable {
         Shizuku.removeRequestPermissionResultListener(permission);
         Shizuku.removeBinderReceivedListener(ready);
         Shizuku.removeBinderDeadListener(stopped);
-        if (reader != null || binding) {
+        if (reader != null || binding) ExportQueue.get(activity).whenIdle(() -> {
             try {
-                Shizuku.unbindUserService(service, connection, true);
+                Shizuku.unbindUserService(service, connection, false);
             } catch (RuntimeException ignored) {
                 // Shizuku may already have stopped.
             }
-        }
+        });
     }
 }

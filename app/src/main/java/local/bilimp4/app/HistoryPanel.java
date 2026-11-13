@@ -90,6 +90,15 @@ final class HistoryPanel {
         render();
     }
 
+    void expandRunningFolder(long id) {
+        for (VideoHistory.Entry entry : entries) {
+            if (entry.id() == id && entry.folder() != null && expandedFolders.add(entry.folder().key())) {
+                render();
+                return;
+            }
+        }
+    }
+
     private void render() {
         active.clear();
         list.removeAllViews();

@@ -36,6 +36,7 @@ final class DownloadPreview implements AutoCloseable {
     private final ShapeableImageView cover;
     private final TextView title;
     private final TextView duration;
+    private final TextView notice;
     private final MaterialButton choose;
     private final DanmakuControls danmaku;
     private final MaterialButton download;
@@ -75,6 +76,9 @@ final class DownloadPreview implements AutoCloseable {
         labels.addView(duration, activity.spacing(3));
         summary.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
         body.addView(summary);
+        notice = activity.text("", 14, true);
+        notice.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+        body.addView(notice);
 
         choose = activity.button("画质", com.google.android.material.R.attr.materialButtonOutlinedStyle);
         choose.setOnClickListener(view -> chooseQuality());
@@ -100,6 +104,8 @@ final class DownloadPreview implements AutoCloseable {
         BiliClient.Streams data = inspection.streams();
         streams = data;
         selected = 0;
+        notice.setText(inspection.notice());
+        notice.setVisibility(inspection.notice() == null ? View.GONE : View.VISIBLE);
         summary.setVisibility(data == null ? View.GONE : View.VISIBLE);
         choose.setVisibility(data == null ? View.GONE : View.VISIBLE);
         download.setVisibility(data == null ? View.GONE : View.VISIBLE);

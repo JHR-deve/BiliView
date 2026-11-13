@@ -52,7 +52,11 @@ final class BiliClient {
         }
     }
     record Collection(String key, String title, List<Video> videos) {}
-    record Inspection(Streams streams, List<Collection> collections) {}
+    record Inspection(Streams streams, List<Collection> collections, String notice) {
+        Inspection(Streams streams, List<Collection> collections) {
+            this(streams, collections, null);
+        }
+    }
 
     static Streams resolve(String input, String cookie, ExportTask task) throws Exception {
         return resolve(videoLink(input, task), cookie, task, null);
@@ -64,11 +68,17 @@ final class BiliClient {
             return new Inspection(null, java.util.Collections.singletonList(BiliCollections.load(link, cookie, task)));
         }
         List<Collection> collections = new ArrayList<>();
-        Streams streams = resolve(link, cookie, task, collections);
-        return new Inspection(streams, collections);
+        try {
+            Streams streams = resolve(link, cookie, task, collections);
+            return new Inspection(streams, collections);
+        } catch (BiliPgc.Unavailable error) {
+            if (collections.isEmpty()) throw error;
+            return new Inspection(null, collections, error.getMessage());
+        }
     }
 
     private static Streams resolve(Uri link, String cookie, ExportTask task, List<Collection> collections) throws Exception {
+        if (BiliPgc.matches(link)) return BiliPgc.resolve(link, cookie, task, collections);
         Matcher path = VIDEO_PATH.matcher(link.getPath() == null ? "" : link.getPath());
         if (!path.matches() || !ID.matcher(path.group(1)).matches()) {
             throw new IOException("请输入普通投稿的 BV/AV 号或视频链接。");
@@ -85,6 +95,8 @@ final class BiliClient {
             }
         }
         JSONObject info = requireData(json(API + "/x/web-interface/view?" + idQuery, SITE, cookie, task), "获取视频信息");
+        Uri redirect = Uri.parse(info.optString("redirect_url"));
+        if (BiliPgc.matches(redirect)) return BiliPgc.resolve(redirect, cookie, task, collections);
         JSONArray pages = info.optJSONArray("pages");
         JSONObject page = pages == null ? null : pages.optJSONObject(part - 1);
         if (page == null) throw new IOException("没有找到链接指定的分集。");
@@ -99,13 +111,8 @@ final class BiliClient {
         String cover = info.optString("pic");
         boolean loggedIn = cookie != null;
 
-        Map<String, String> params = new TreeMap<>();
+        Map<String, String> params = playbackParameters(loggedIn, cid);
         params.put("bvid", bvid);
-        params.put("cid", Long.toString(cid));
-        params.put("qn", loggedIn ? "127" : "64");
-        params.put("fnval", loggedIn ? "4048" : "16");
-        params.put("fnver", "0");
-        params.put("fourk", loggedIn ? "1" : "0");
 
         JSONObject playback = null;
         Exception failure = null;
@@ -127,14 +134,24 @@ final class BiliClient {
         throw new IOException("该链接没有可导出的 MP4 视频流。");
     }
 
+    static Map<String, String> playbackParameters(boolean loggedIn, long cid) {
+        Map<String, String> params = new TreeMap<>();
+        params.put("cid", Long.toString(cid));
+        params.put("qn", loggedIn ? "127" : "64");
+        params.put("fnval", loggedIn ? "4048" : "16");
+        params.put("fnver", "0");
+        params.put("fourk", loggedIn ? "1" : "0");
+        return params;
+    }
+
     private static Uri videoLink(String input, ExportTask task) throws IOException {
         Matcher match = LINK.matcher(input);
         while (match.find()) {
             Uri link = Uri.parse(match.group()).buildUpon().scheme("https").build();
             String host = link.getHost();
             if ("b23.tv".equalsIgnoreCase(host)) return expand(link, task);
-            if (isBiliHost(host) && link.getPath() != null && (link.getPath().startsWith("/video/")
-                    || ("space.bilibili.com".equalsIgnoreCase(host) && BiliCollections.matches(link)))) {
+            if (BiliPgc.matches(link) || (isBiliHost(host) && link.getPath() != null && (link.getPath().startsWith("/video/")
+                    || ("space.bilibili.com".equalsIgnoreCase(host) && BiliCollections.matches(link))))) {
                 return link;
             }
         }
@@ -164,13 +181,13 @@ final class BiliClient {
         throw new IOException("短链接无法展开。请粘贴完整的视频播放页链接。");
     }
 
-    private static boolean isBiliHost(String host) {
+    static boolean isBiliHost(String host) {
         if (host == null) return false;
         String lower = host.toLowerCase(Locale.ROOT);
         return lower.equals("bilibili.com") || lower.endsWith(".bilibili.com");
     }
 
-    private static Streams select(JSONObject data, String title, String referer, long aid, long cid, int seconds, String cover) {
+    static Streams select(JSONObject data, String title, String referer, long aid, long cid, int seconds, String cover) {
         if (data == null) return null;
         JSONObject dash = data.optJSONObject("dash");
         if (dash != null) {
@@ -330,7 +347,7 @@ final class BiliClient {
         return file == null ? "" : file.split("\\.", 2)[0];
     }
 
-    private static String query(Map<String, String> params) {
+    static String query(Map<String, String> params) {
         Uri.Builder builder = new Uri.Builder();
         params.forEach(builder::appendQueryParameter);
         return builder.build().getEncodedQuery();
