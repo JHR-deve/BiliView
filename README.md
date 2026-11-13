@@ -1,22 +1,26 @@
-# B站 MP4
+# BiliView
 
-Android 10 及以上可用。界面使用 Google Material 3 组件，跟随系统主题，并在支持的设备上使用动态取色。
+BiliView 是由 JHR-deve 独立开发的 Android 应用，可下载 B 站视频和合集、批量转换离线缓存，并将滚动弹幕直接烧录进 MP4。支持 Android 10 及以上，界面采用 Material 3，跟随系统浅色和深色主题。
 
-B站 MP4 是由 JHR-deve 开发的独立 Android 应用。通过侧边栏可进入链接下载、本地转换、弹幕设置和关于页面。
+## 界面与功能
 
-- **链接下载**支持普通投稿的 BV/AV 号、视频页链接、带分集号的链接和 b23.tv 短链接。先解析链接，再从 B 站返回的画质中选择并下载 MP4。
-- **账号**支持用哔哩哔哩 App 扫码登录。可保存二维码，用同一部手机从扫一扫的相册入口选取。登录后可查看头像、昵称、UID、等级和大会员状态，会话在本机加密保存。
-- **弹幕**可在下载时直接烧录进 MP4，用系统播放器或其他视频播放器即可观看。「弹幕设置」支持同步 B 站账号返回的弹幕偏好，也可调整本机字号、不透明度和颜色。
-- **本地转换**可通过已运行并授权的 Shizuku 扫描哔哩哔哩和概念版的离线缓存。Android 11 及以上的系统文件选择器无法打开官方缓存所在的 `Android/data`，应用内的「Shizuku 指南」提供启动和授权步骤。
-- 本地转换也可勾选「将弹幕嵌入 MP4」。应用优先读取缓存中的弹幕文件，缺少弹幕时可按分集在线补取，并与链接下载共用弹幕样式设置。
-- 也可选择一个共享缓存文件夹。应用记住文件夹，并自动配对其中同目录的 video.m4s 和 audio.m4s，或分开的 MP4 和 M4A。
-- 成品位于「下载 / BiliMP4」。处理时请保持应用打开。
+下方截图来自正在开发的 BiliView 0.6.2，正式发布版本以 GitHub Releases 为准。
 
-## 权限与弹幕设置
+| 合集批量下载 | 本地缓存转换 | 下载记录 |
+| --- | --- | --- |
+| <img src="docs/screenshots/collection.png" width="230" alt="合集列表标出当前视频，用户可勾选视频加入队列"> | <img src="docs/screenshots/cache.png" width="230" alt="本地转换页支持扫描 B 站缓存、批量转换和嵌入弹幕"> | <img src="docs/screenshots/history.png" width="230" alt="下载记录中展开合集文件夹，显示中断任务和完成的视频"> |
+| 从视频打开合集时会定位到当前视频，多选后逐条下载。 | 自动配对缓存的音视频轨，可选择批量转换和嵌入弹幕。 | 按视频或合集搜索，查看进度，重试下载，打开、分享或删除成品。 |
 
-扫描和读取 B 站官方离线缓存需要 Shizuku 正在运行，且用户已授权「B站 MP4」。链接下载使用 Android 网络权限，导入共享文件夹时由用户在系统文件选择器中授权。 [Shizuku 使用手册](https://shizuku.rikka.app/zh-hans/guide/setup/)
+## 开始使用
 
-本机弹幕默认字号为 80%，不透明度为 70%。启用「跟随 B 站弹幕设置」时，账号返回的设置优先，缺项使用本机值。
+1. **链接下载**。粘贴 B 站视频链接、BV/AV 号或 b23.tv 短链接，解析后选择画质。也可解析 UP 主空间的合集或系列链接，多选后加入队列。
+2. **本地转换**。可扫描哔哩哔哩及概念版的离线缓存，也可选一个共享文件夹。BiliView 会自动配对同目录的音视频文件，批量转换会跳过已有成品。
+3. **嵌入弹幕**。下载和转换前可勾选「将弹幕嵌入 MP4」，导出后可用系统播放器观看。本机默认字号为 80%，不透明度为 70%。也可扫码登录并启用「跟随 B 站弹幕设置」。
+4. **管理成品**。MP4 保存在「下载 / BiliMP4」，合集成品各自归入子文件夹。处理期间请保持应用打开。失败、中断或取消的链接下载可在原记录中重试。
+
+### Shizuku 授权
+
+自动扫描和读取 B 站官方离线缓存，需要启动 Shizuku 并授权 BiliView。Android 11 及以上可在「本地转换 → Shizuku 指南」查看配对和授权步骤。使用共享缓存文件夹时，可直接通过系统文件选择器授权。 [Shizuku 使用手册](https://shizuku.rikka.app/zh-hans/guide/setup/)
 
 ## 构建
 
@@ -28,7 +32,25 @@ B站 MP4 是由 JHR-deve 开发的独立 Android 应用。通过侧边栏可进�
 
 APK 位于 app/build/outputs/apk/debug/app-debug.apk。
 
-## 源码与许可
+## 软件更新
+
+「关于」页显示当前版本、构建编号和本版更新内容。默认从浏览器打开 GitHub Releases。已获仓库权限的用户可登录 GitHub 下载 APK。
+
+如需在应用内比较版本，构建时用 `-Pbilimp4UpdateFeed=https://你的更新域名/update.json` 配置一个可直接读取的 HTTPS JSON 地址。更新源返回以下字段。应用比较 `versionCode`，并在设备满足 `minSdk` 时提供更新说明和下载页入口。
+
+~~~json
+{
+  "versionCode": 10,
+  "versionName": "0.6.2",
+  "minSdk": 29,
+  "notes": "应用更名为 BiliView",
+  "releaseUrl": "https://github.com/JHR-deve/BiliMP4-Android/releases/tag/v0.6.2"
+}
+~~~
+
+发布时递增 `app/build.gradle` 的 `versionCode`，同步更新本版说明，使用与已安装版本一致的签名证书构建 APK。先把签名 APK 上传到对应 Release，再更新 JSON。APK 由用户下载后通过系统安装器覆盖安装。设备上的调试包使用原调试证书才能覆盖更新。
+
+## 开源说明
 
 项目采用 GPL-3.0，源码存放在独立的 GitHub 私有仓库。 [许可证](LICENSE) · [项目仓库](https://github.com/JHR-deve/BiliMP4-Android)
 
