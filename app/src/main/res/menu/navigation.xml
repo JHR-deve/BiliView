@@ -1,0 +1,11 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <group android:checkableBehavior="single">
+        <item android:id="@+id/nav_download" android:icon="@drawable/ic_download"
+            android:title="@string/nav_download" />
+        <item android:id="@+id/nav_cache" android:icon="@drawable/ic_convert"
+            android:title="@string/nav_cache" />
+        <item android:id="@+id/nav_about" android:icon="@drawable/ic_info"
+            android:title="@string/nav_about" />
+    </group>
+    <item android:id="@+id/nav_danmaku" android:title="@string/nav_danmaku" />
+</menu>
