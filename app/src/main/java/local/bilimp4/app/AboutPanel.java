@@ -3,7 +3,6 @@ package local.bilimp4.app;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.Build;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.ImageView;
@@ -15,9 +14,7 @@ import com.google.android.material.button.MaterialButton;
 import com.google.android.material.card.MaterialCardView;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
-import org.json.JSONException;
 
-import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -60,18 +57,14 @@ final class AboutPanel implements AutoCloseable {
         page.addView(hero);
 
         page.addView(activity.text(activity.getString(R.string.about_update_title), 19, false), activity.spacing(20));
-        boolean hasFeed = !BuildConfig.UPDATE_FEED_URL.isBlank();
         checkUpdate = activity.button(activity.getString(R.string.about_update_check),
                 com.google.android.material.R.attr.materialButtonStyle);
-        checkUpdate.setOnClickListener(view -> {
-            if (hasFeed) checkForUpdate();
-            else openLink(RELEASES);
-        });
+        checkUpdate.setOnClickListener(view -> checkForUpdate());
         page.addView(checkUpdate, activity.spacing(8));
         updateStatus = activity.text("", 14, true);
         updateStatus.setVisibility(View.GONE);
         page.addView(updateStatus, activity.spacing(6));
-        if (hasFeed) addLink(R.string.about_update_releases, RELEASES);
+        addLink(R.string.about_update_releases, AppUpdate.PAGE);
         MaterialButton changes = activity.button(activity.getString(R.string.about_changes_title),
                 androidx.appcompat.R.attr.borderlessButtonStyle);
         changes.setOnClickListener(view -> new MaterialAlertDialogBuilder(activity)
@@ -99,41 +92,34 @@ final class AboutPanel implements AutoCloseable {
         updateStatus.setVisibility(View.VISIBLE);
         worker.execute(() -> {
             AppUpdate.Release release = null;
+            String failure = null;
             try {
-                release = AppUpdate.check(BuildConfig.UPDATE_FEED_URL);
-            } catch (IOException | JSONException ignored) {
-                // Display an unavailable status and keep the release page accessible.
+                release = AppUpdate.latest();
+            } catch (Exception error) {
+                failure = ExportQueue.errorMessage(error);
             }
             AppUpdate.Release result = release;
-            activity.runOnUiThread(() -> showUpdate(result));
+            String message = failure;
+            activity.runOnUiThread(() -> showUpdate(result, message));
         });
     }
 
-    private void showUpdate(AppUpdate.Release release) {
+    private void showUpdate(AppUpdate.Release release, String failure) {
         if (activity.isDestroyed() || activity.isFinishing()) return;
         checkUpdate.setEnabled(true);
+        updateStatus.setVisibility(View.VISIBLE);
         if (release == null) {
-            updateStatus.setText(R.string.about_update_unavailable);
+            updateStatus.setText(failure == null
+                    ? activity.getString(R.string.about_update_unavailable) : failure);
             return;
         }
-        if (release.versionCode() <= BuildConfig.VERSION_CODE) {
+        if (!AppUpdate.newer(release.version())) {
             updateStatus.setText(R.string.about_update_current);
             return;
         }
-        if (release.minSdk() > Build.VERSION.SDK_INT) {
-            updateStatus.setText(activity.getString(R.string.about_update_incompatible, release.versionName()));
-            return;
-        }
-        String title = activity.getString(R.string.about_update_found, release.versionName());
-        updateStatus.setText(title);
-        if (!page.isShown()) return;
-        new MaterialAlertDialogBuilder(activity).setTitle(title)
-                .setMessage(release.notes().isEmpty() ? activity.getString(R.string.about_update_details) : release.notes())
-                .setNegativeButton(android.R.string.cancel, null)
-                .setPositiveButton(R.string.about_update_download, (dialog, which) -> openLink(release.page().toString()))
-                .show();
+        updateStatus.setText(activity.getString(R.string.about_update_found, release.version()));
+        UpdatePrompt.show(activity, release);
     }
-
     private static void section(MainActivity activity, LinearLayout page, int title, int description) {
         page.addView(activity.text(activity.getString(title), 19, false), activity.spacing(20));
         page.addView(activity.text(activity.getString(description), 14, true), activity.spacing(6));

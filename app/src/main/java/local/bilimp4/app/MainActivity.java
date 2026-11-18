@@ -132,6 +132,7 @@ public final class MainActivity extends AppCompatActivity {
         }
         updateButtons();
         if (ExportService.SHOW_HISTORY.equals(getIntent().getAction())) showQueue();
+        UpdatePrompt.autoCheck(this);
     }
 
     private void createScreen() {
