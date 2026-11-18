@@ -324,7 +324,7 @@ final class BiliClient {
     }
 
     // WBI parameter signing follows the protocol used by Mimi Downloader.
-    private static String sign(Map<String, String> params, String cookie, ExportTask task) throws Exception {
+    static String sign(Map<String, String> params, String cookie, ExportTask task) throws Exception {
         JSONObject nav = json(API + "/x/web-interface/nav", SITE, cookie, task);
         JSONObject data = nav.optJSONObject("data");
         JSONObject wbi = data == null ? null : data.optJSONObject("wbi_img");

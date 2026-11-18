@@ -4,6 +4,8 @@
             android:title="@string/nav_download" />
         <item android:id="@+id/nav_favorites" android:icon="@drawable/ic_favorites"
             android:title="@string/nav_favorites" />
+        <item android:id="@+id/nav_composition" android:icon="@drawable/ic_search"
+            android:title="@string/nav_composition" />
         <item android:id="@+id/nav_cache" android:icon="@drawable/ic_convert"
             android:title="@string/nav_cache" />
         <item android:id="@+id/nav_history" android:icon="@drawable/ic_download"
@@ -12,4 +14,6 @@
             android:title="@string/nav_about" />
     </group>
     <item android:id="@+id/nav_danmaku" android:title="@string/nav_danmaku" />
+    <item android:id="@+id/nav_relation" android:title="@string/nav_relation" android:visible="false" />
+    <item android:id="@+id/nav_aicu" android:title="@string/nav_aicu" android:visible="false" />
 </menu>

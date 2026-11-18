@@ -3,6 +3,7 @@
     <string name="nav_open">打开侧边栏</string>
     <string name="nav_download">链接下载</string>
 <string name="nav_favorites">收藏夹</string>
+    <string name="nav_composition">用户查询</string>
     <string name="nav_cache">本地转换</string>
     <string name="nav_history">下载记录</string>
     <string name="history_delete">删除</string>
@@ -14,6 +15,8 @@
     <string name="history_trashed">已移到“最近删除”</string>
     <string name="nav_about">关于</string>
     <string name="nav_danmaku">弹幕设置</string>
+    <string name="nav_relation">用户列表</string>
+    <string name="nav_aicu">评论与弹幕</string>
     <string name="account_guest_hint">可直接下载，登录后可能有更多画质</string>
     <string name="account_help_title">登录与画质说明</string>
     <string name="account_help_body">如何登录\n点「登录 B 站」，用哔哩哔哩 App 扫码并确认。同一部手机可先点「保存到相册」，再从哔哩哔哩「扫一扫」的相册入口选取二维码。\n\n如何选择画质\n游客也可以下载。登录后重新解析链接，再点「画质」查看当前视频可用的选项。高码率、60 帧、4K 等选项以 B 站对当前视频和账号实际返回的结果为准。\n\n合集下载\n从单条视频进入合集时，所选画质用于各条视频。某条没有该档位时，会优先选择不高于它的可用画质。</string>

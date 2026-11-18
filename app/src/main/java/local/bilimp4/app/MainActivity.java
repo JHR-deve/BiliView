@@ -63,6 +63,10 @@ public final class MainActivity extends AppCompatActivity {
     private LinearLayout downloadPanel;
     private LinearLayout importPanel;
     private AboutPanel aboutPanel;
+    private CompositionPanel compositionPanel;
+    private RelationPanel relationPanel;
+    private AicuPanel aicuPanel;
+    private final java.util.ArrayDeque<Long> profileStack = new java.util.ArrayDeque<>();
     private LinearLayout historyPage;
     private LinearLayout favoritesPage;
     private FavoritesPanel favorites;
@@ -207,6 +211,12 @@ public final class MainActivity extends AppCompatActivity {
         content.addView(historyPage);
         aboutPanel = new AboutPanel(this);
         content.addView(aboutPanel.view());
+        compositionPanel = new CompositionPanel(this);
+        content.addView(compositionPanel.view());
+        relationPanel = new RelationPanel(this);
+        content.addView(relationPanel.view());
+        aicuPanel = new AicuPanel(this);
+        content.addView(aicuPanel.view());
         statusArea = column();
         statusArea.addView(createStatus(), spacing(20));
         content.addView(statusArea);
@@ -249,6 +259,18 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         if (page == R.id.nav_favorites && favorites.back()) return;
+        if (page == R.id.nav_relation) {
+            selectPage(R.id.nav_composition);
+            return;
+        }
+        if (page == R.id.nav_aicu) {
+            selectPage(R.id.nav_composition);
+            return;
+        }
+        if (page == R.id.nav_composition && !profileStack.isEmpty() && compositionPanel != null) {
+            compositionPanel.query(profileStack.pop());
+            return;
+        }
         if (page != R.id.nav_download) {
             selectPage(R.id.nav_download);
             return;
@@ -394,8 +416,12 @@ public final class MainActivity extends AppCompatActivity {
         favoritesPage.setVisibility(page == R.id.nav_favorites ? View.VISIBLE : View.GONE);
         importPanel.setVisibility(page == R.id.nav_cache ? View.VISIBLE : View.GONE);
         aboutPanel.view().setVisibility(page == R.id.nav_about ? View.VISIBLE : View.GONE);
+        compositionPanel.view().setVisibility(page == R.id.nav_composition ? View.VISIBLE : View.GONE);
+        relationPanel.view().setVisibility(page == R.id.nav_relation ? View.VISIBLE : View.GONE);
+        aicuPanel.view().setVisibility(page == R.id.nav_aicu ? View.VISIBLE : View.GONE);
         historyPage.setVisibility(page == R.id.nav_history ? View.VISIBLE : View.GONE);
-        statusArea.setVisibility(page == R.id.nav_about || page == R.id.nav_history ? View.GONE : View.VISIBLE);
+        statusArea.setVisibility(page == R.id.nav_about || page == R.id.nav_history
+                || page == R.id.nav_composition || page == R.id.nav_relation || page == R.id.nav_aicu ? View.GONE : View.VISIBLE);
         navigation.setCheckedItem(page);
         toolbar.setTitle(navigation.getMenu().findItem(page).getTitle());
         caches.setVisible(page == R.id.nav_cache);
@@ -773,6 +799,9 @@ public final class MainActivity extends AppCompatActivity {
         if (current != null) current.cancel();
         current = null;
         if (aboutPanel != null) aboutPanel.close();
+        if (compositionPanel != null) compositionPanel.close();
+        if (relationPanel != null) relationPanel.close();
+        if (aicuPanel != null) aicuPanel.close();
         if (caches != null) caches.close();
         if (favorites != null) favorites.close();
         if (account != null) account.close();
@@ -819,6 +848,34 @@ public final class MainActivity extends AppCompatActivity {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-1, -2);
         params.topMargin = dp(top);
         return params;
+    }
+
+    String biliCookie() {
+        return account == null ? null : account.cookie();
+    }
+
+    void openRelation(long mid, String kind, String label) {
+        if (relationPanel == null) return;
+        relationPanel.open(mid, kind, label);
+        selectPage(R.id.nav_relation);
+    }
+
+    void openAicu(long mid, String name) {
+        if (aicuPanel == null) return;
+        aicuPanel.open(mid, name);
+        selectPage(R.id.nav_aicu);
+    }
+
+    void backToProfile() {
+        selectPage(R.id.nav_composition);
+    }
+
+    void showProfile(long mid) {
+        if (compositionPanel == null) return;
+        long current = compositionPanel.currentMid();
+        if (current > 0 && current != mid) profileStack.push(current);
+        compositionPanel.query(mid);
+        selectPage(R.id.nav_composition);
     }
 
     int color(int attr) {
