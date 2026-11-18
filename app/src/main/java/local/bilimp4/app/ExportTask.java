@@ -43,7 +43,7 @@ final class ExportTask {
     private long lastUpdate;
     private String lastStage;
 
-    record Result(Uri uri, String name, boolean burned, String note, String folder) {}
+    record Result(Uri uri, String name, boolean burned, String note, String folder, boolean audio) {}
 
     interface Progress {
         void update(String stage, int percent);
@@ -93,7 +93,8 @@ final class ExportTask {
     }
 
     Result fromLink(BiliClient.Streams streams, BiliClient.Quality quality, DanmakuStyle.Options options,
-                    String cookie) throws IOException {
+                    String cookie, boolean audioOnly) throws IOException {
+        if (audioOnly) return fromLinkAudio(streams, quality);
         File video = File.createTempFile("bili-video-", ".m4s", context.getCacheDir());
         File audio = null;
         try {
@@ -125,6 +126,44 @@ final class ExportTask {
             video.delete();
             if (audio != null) audio.delete();
         }
+    }
+
+    private Result fromLinkAudio(BiliClient.Streams streams, BiliClient.Quality quality) throws IOException {
+        File source = File.createTempFile("bili-audio-", ".m4s", context.getCacheDir());
+        try {
+            progress("正在下载音频", -1);
+            List<String> urls = streams.audio().isEmpty() ? quality.urls() : streams.audio();
+            BiliClient.download(urls, streams.referer(), source, "正在下载音频", this);
+            return exportAudio(source, streams.title());
+        } finally {
+            source.delete();
+        }
+    }
+
+    private Result exportAudio(File source, String title) throws IOException {
+        progress("正在合成音频", -1);
+        return publish(title + " - 音频", false, null, true, output -> muxAudio(source, output));
+    }
+
+    private void muxAudio(File source, FileOutputStream output) throws IOException {
+        try (Mp4Track audio = Mp4Track.open(source, C.TRACK_TYPE_AUDIO)) {
+            Mp4Track.Sample sample = audio.next();
+            if (sample == null || audio.format() == null) throw new IOException("所选文件没有可导出的音轨。");
+            try (Mp4Muxer muxer = new Mp4Muxer.Builder(output).setSampleBatchingEnabled(false).build()) {
+                int track = muxer.addTrack(audio.format());
+                long end = 0;
+                while (sample != null) {
+                    check();
+                    writeSample(muxer, track, sample);
+                    end = Math.max(end, sample.timeUs());
+                    sample = audio.next();
+                    progress("正在合成音频", percent(end, audio.durationUs(), 99));
+                }
+            }
+        } catch (MuxerException | IllegalArgumentException | IllegalStateException error) {
+            throw new IOException("无法把音轨封装为 M4A。请检查所选文件是否完整。", error);
+        }
+        progress("正在合成音频", 100);
     }
 
     private Result burn(File video, File audio, String title, List<Danmaku.Comment> comments,
@@ -261,12 +300,17 @@ final class ExportTask {
     }
 
     private Result publish(String title, boolean burned, String note, VideoWriter writer) throws IOException {
+        return publish(title, burned, note, false, writer);
+    }
+
+    private Result publish(String title, boolean burned, String note, boolean audio, VideoWriter writer)
+            throws IOException {
         check();
         ContentResolver resolver = context.getContentResolver();
         ContentValues values = new ContentValues();
-        String name = fileName(title);
+        String name = fileName(title, audio);
         values.put(MediaStore.Downloads.DISPLAY_NAME, name);
-        values.put(MediaStore.Downloads.MIME_TYPE, "video/mp4");
+        values.put(MediaStore.Downloads.MIME_TYPE, audio ? "audio/mp4" : "video/mp4");
         values.put(MediaStore.Downloads.RELATIVE_PATH, folder == null ? PATH : PATH + "/" + folder);
         values.put(MediaStore.Downloads.IS_PENDING, 1);
         Uri uri = resolver.insert(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), values);
@@ -283,7 +327,7 @@ final class ExportTask {
             values.put(MediaStore.Downloads.IS_PENDING, 0);
             if (resolver.update(uri, values, null, null) != 1) throw new IOException("无法发布下载文件。");
             published = true;
-            return new Result(uri, displayName(resolver, uri, name), burned, note, folder);
+            return new Result(uri, displayName(resolver, uri, name), burned, note, folder, audio);
         } finally {
             if (!published) resolver.delete(uri, null, null);
         }
@@ -352,13 +396,18 @@ final class ExportTask {
     }
 
     static String fileName(String title) {
+        return fileName(title, false);
+    }
+
+    static String fileName(String title, boolean audio) {
         String name = safeName(title);
-        if (name.toLowerCase(Locale.ROOT).endsWith(".mp4")) name = name.substring(0, name.length() - 4);
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".mp4") || lower.endsWith(".m4a")) name = name.substring(0, name.length() - 4);
         if (name.codePointCount(0, name.length()) > 60) {
             name = name.substring(0, name.offsetByCodePoints(0, 60));
         }
         if (name.isEmpty() || name.equals(".") || name.equals("..")) name = "B站视频";
-        return name + ".mp4";
+        return name + (audio ? ".m4a" : ".mp4");
     }
 
     static String folderName(String title) {

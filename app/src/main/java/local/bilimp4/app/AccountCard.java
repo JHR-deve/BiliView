@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Typeface;
 import android.text.TextUtils;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.FrameLayout;
@@ -30,6 +31,9 @@ final class AccountCard implements AutoCloseable {
     private final TextView title;
     private final TextView info;
     private final MaterialButton action;
+    private ShapeableImageView footerAvatar;
+    private TextView footerInitials;
+    private TextView footerInfo;
     private String cookie;
     private BiliAccount.Profile profile;
     private int generation;
@@ -104,6 +108,58 @@ final class AccountCard implements AutoCloseable {
         return cookie;
     }
 
+    View sidebarFooter() {
+        LinearLayout row = new LinearLayout(activity);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(activity.dp(20), activity.dp(10), activity.dp(16), activity.dp(14));
+        int size = activity.dp(36);
+        FrameLayout icon = new FrameLayout(activity);
+        footerInitials = activity.text("B", 15, false);
+        footerInitials.setGravity(Gravity.CENTER);
+        footerInitials.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        footerInitials.setTextColor(activity.color(com.google.android.material.R.attr.colorOnPrimary));
+        android.graphics.drawable.GradientDrawable circle = new android.graphics.drawable.GradientDrawable();
+        circle.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+        circle.setColor(activity.color(com.google.android.material.R.attr.colorPrimary));
+        footerInitials.setBackground(circle);
+        icon.addView(footerInitials, new FrameLayout.LayoutParams(-1, -1));
+        footerAvatar = new ShapeableImageView(activity);
+        footerAvatar.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        footerAvatar.setShapeAppearanceModel(ShapeAppearanceModel.builder()
+                .setAllCornerSizes(size / 2f).build());
+        footerAvatar.setVisibility(View.GONE);
+        icon.addView(footerAvatar, new FrameLayout.LayoutParams(-1, -1));
+        row.addView(icon, new LinearLayout.LayoutParams(size, size));
+
+        footerInfo = activity.text("未登录", 13, true);
+        LinearLayout.LayoutParams labelSize = new LinearLayout.LayoutParams(0, -2, 1);
+        labelSize.setMarginStart(activity.dp(12));
+        row.addView(footerInfo, labelSize);
+
+        TypedValue ripple = new TypedValue();
+        activity.getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
+        row.setBackgroundResource(ripple.resourceId);
+        row.setContentDescription("B 站账号");
+        row.setOnClickListener(view -> accountAction());
+        showFooter(profile, cookie != null);
+        return row;
+    }
+
+    private void showFooter(BiliAccount.Profile account, boolean loggedIn) {
+        if (footerInfo == null) return;
+        footerInfo.setText(account == null ? (loggedIn ? "登录已失效" : "未登录")
+                : account.vip() ? "大会员" : "普通账号");
+        footerInfo.setTextColor(activity.color(account == null
+                ? com.google.android.material.R.attr.colorOnSurfaceVariant
+                : account.vip() ? com.google.android.material.R.attr.colorPrimary
+                : com.google.android.material.R.attr.colorOnSurfaceVariant));
+        if (footerAvatar != null) {
+            footerAvatar.setImageDrawable(null);
+            footerAvatar.setVisibility(View.GONE);
+        }
+        if (footerInitials != null) footerInitials.setVisibility(View.VISIBLE);
+    }
+
     void setBusy(boolean busy) {
         this.busy = busy;
         action.setEnabled(!busy);
@@ -165,6 +221,11 @@ final class AccountCard implements AutoCloseable {
                 if (active(request) && photo != null) {
                     avatar.setImageBitmap(photo);
                     avatar.setVisibility(View.VISIBLE);
+                    if (footerAvatar != null) {
+                        footerAvatar.setImageBitmap(photo);
+                        footerAvatar.setVisibility(View.VISIBLE);
+                        if (footerInitials != null) footerInitials.setVisibility(View.GONE);
+                    }
                 }
             });
         });
@@ -191,6 +252,7 @@ final class AccountCard implements AutoCloseable {
                     + "\n" + (account.vip() ? "大会员" : "普通账号"));
         }
         action.setText(next == null ? "登录 B 站" : "账号");
+        showFooter(account, next != null);
         if (changed) sessionChanged.run();
     }
 

@@ -64,6 +64,8 @@ public final class MainActivity extends AppCompatActivity {
     private LinearLayout importPanel;
     private AboutPanel aboutPanel;
     private LinearLayout historyPage;
+    private LinearLayout favoritesPage;
+    private FavoritesPanel favorites;
     private LinearLayout statusArea;
     private int page = R.id.nav_download;
     private TextInputEditText link;
@@ -79,6 +81,7 @@ public final class MainActivity extends AppCompatActivity {
     private TextView detail;
     private LinearProgressIndicator progress;
     private LinearLayout resultActions;
+    private MaterialButton openAction;
     private ExportTask current;
     private ExportTask.Result lastResult;
     private VideoHistory history;
@@ -123,7 +126,8 @@ public final class MainActivity extends AppCompatActivity {
             Uri uri = state.getParcelable("resultUri");
             if (uri != null) {
                 showResult(new ExportTask.Result(uri, state.getString("resultName"),
-                        state.getBoolean("resultBurned"), state.getString("resultNote"), state.getString("resultFolder")));
+                        state.getBoolean("resultBurned"), state.getString("resultNote"), state.getString("resultFolder"),
+                        state.getBoolean("resultAudio")));
             }
         }
         updateButtons();
@@ -179,6 +183,22 @@ public final class MainActivity extends AppCompatActivity {
             enqueue(requests, requests.size() > 1);
         }, uri -> openVideo(uri, false));
         content.addView(downloadPanel);
+        favoritesPage = column();
+        favorites = new FavoritesPanel(this, favoritesPage, new FavoritesPanel.Actions() {
+            @Override public void download(String key, String title, List<BiliFavorites.Entry> entries,
+                                           boolean embedDanmaku, boolean audioOnly, int quality) {
+                startFavoritesDownload(key, title, entries, embedDanmaku, audioOnly, quality);
+            }
+
+            @Override public void danmakuSettings() {
+                DanmakuControls.showSettings(MainActivity.this);
+            }
+
+            @Override public void signIn() {
+                startActivityForResult(new Intent(MainActivity.this, LoginActivity.class), AccountCard.LOGIN);
+            }
+        });
+        content.addView(favoritesPage);
         content.addView(importPanel);
         historyPage = column();
         records = new HistoryPanel(this, historyPage, this::openVideo, this::cancelJob, this::confirmDeleteVideo,
@@ -194,13 +214,17 @@ public final class MainActivity extends AppCompatActivity {
         drawer.setBackgroundColor(color(com.google.android.material.R.attr.colorSurface));
         drawer.addView(root, new DrawerLayout.LayoutParams(-1, -1));
         navigation = createNavigation();
-        drawer.addView(navigation, new DrawerLayout.LayoutParams(dp(308), -1, GravityCompat.START));
+        LinearLayout sidebar = column();
+        sidebar.setBackgroundColor(color(com.google.android.material.R.attr.colorSurface));
+        sidebar.addView(navigation, new LinearLayout.LayoutParams(-1, 0, 1));
+        sidebar.addView(account.sidebarFooter(), new LinearLayout.LayoutParams(-1, -2));
+        drawer.addView(sidebar, new DrawerLayout.LayoutParams(dp(308), -1, GravityCompat.START));
         drawer.setDrawerTitle(GravityCompat.START, getString(R.string.nav_open));
         ViewCompat.setOnApplyWindowInsetsListener(drawer, (view, insets) -> {
             Insets safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
             Insets ime = insets.getInsets(WindowInsetsCompat.Type.ime());
             root.setPadding(safe.left, safe.top, safe.right, Math.max(safe.bottom, ime.bottom));
-            navigation.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+            sidebar.setPadding(safe.left, safe.top, safe.right, safe.bottom);
             return WindowInsetsCompat.CONSUMED;
         });
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -219,9 +243,16 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void navigateBack() {
-        if (drawer.isDrawerVisible(GravityCompat.START)) drawer.closeDrawer(GravityCompat.START);
-        else if (page != R.id.nav_download) selectPage(R.id.nav_download);
-        else finish();
+        if (drawer.isDrawerVisible(GravityCompat.START)) {
+            drawer.closeDrawer(GravityCompat.START);
+            return;
+        }
+        if (page == R.id.nav_favorites && favorites.back()) return;
+        if (page != R.id.nav_download) {
+            selectPage(R.id.nav_download);
+            return;
+        }
+        finish();
     }
 
     private NavigationView createNavigation() {
@@ -287,11 +318,11 @@ public final class MainActivity extends AppCompatActivity {
         mainAction.setMarginStart(dp(12));
         actions.addView(download, mainAction);
         panel.addView(actions, spacing(12));
-        preview = new DownloadPreview(this, panel, (streams, quality, options) -> {
+        preview = new DownloadPreview(this, panel, (streams, quality, options, audioOnly) -> {
             String cookie = account.cookie();
-            var download = new VideoHistory.Download(streams.referer(), quality.id(), options != null);
+            var download = new VideoHistory.Download(streams.referer(), quality.id(), options != null, audioOnly);
             Request request = new Request(streams.title(), VideoHistory.DOWNLOAD, null, null, download,
-                    task -> task.fromLink(streams, quality, options, cookie));
+                    task -> task.fromLink(streams, quality, options, cookie, audioOnly));
             enqueue(java.util.Collections.singletonList(request), false);
         }, this::queueVideos);
         link.addTextChangedListener(new TextWatcher() {
@@ -340,11 +371,11 @@ public final class MainActivity extends AppCompatActivity {
         taskActions.addView(background);
         body.addView(taskActions);
         resultActions = new LinearLayout(this);
-        MaterialButton openVideo = button("打开视频", androidx.appcompat.R.attr.borderlessButtonStyle);
-        openVideo.setOnClickListener(view -> openResult(false));
+        openAction = button("打开视频", androidx.appcompat.R.attr.borderlessButtonStyle);
+        openAction.setOnClickListener(view -> openResult(false));
         MaterialButton share = button("分享", androidx.appcompat.R.attr.borderlessButtonStyle);
         share.setOnClickListener(view -> openResult(true));
-        resultActions.addView(openVideo);
+        resultActions.addView(openAction);
         resultActions.addView(share);
         body.addView(resultActions);
         statusCard.addView(body);
@@ -359,6 +390,7 @@ public final class MainActivity extends AppCompatActivity {
         }
         page = destination;
         downloadPanel.setVisibility(page == R.id.nav_download ? View.VISIBLE : View.GONE);
+        favoritesPage.setVisibility(page == R.id.nav_favorites ? View.VISIBLE : View.GONE);
         importPanel.setVisibility(page == R.id.nav_cache ? View.VISIBLE : View.GONE);
         aboutPanel.view().setVisibility(page == R.id.nav_about ? View.VISIBLE : View.GONE);
         historyPage.setVisibility(page == R.id.nav_history ? View.VISIBLE : View.GONE);
@@ -366,6 +398,7 @@ public final class MainActivity extends AppCompatActivity {
         navigation.setCheckedItem(page);
         toolbar.setTitle(navigation.getMenu().findItem(page).getTitle());
         caches.setVisible(page == R.id.nav_cache);
+        favorites.setVisible(page == R.id.nav_favorites);
         refreshHistory();
     }
 
@@ -386,7 +419,10 @@ public final class MainActivity extends AppCompatActivity {
         if (requestCode == CachePanel.PICK_FOLDER && resultCode == RESULT_OK && data != null && data.getData() != null) {
             caches.setFolder(data.getData());
         }
-        if (requestCode == AccountCard.LOGIN && resultCode == RESULT_OK) account.refresh();
+        if (requestCode == AccountCard.LOGIN && resultCode == RESULT_OK) {
+            account.refresh();
+            favorites.invalidate();
+        }
     }
 
     private void updateButtons() {
@@ -397,18 +433,41 @@ public final class MainActivity extends AppCompatActivity {
         account.setBusy(!idle);
         preview.setBusy(!idle);
         caches.setBusy(!idle);
+        favorites.setEnabled(idle);
     }
 
-    private void queueVideos(BiliClient.Collection collection, List<BiliClient.Video> videos, int preferredQuality,
-                             DanmakuStyle.Options options) {
+    private void startFavoritesDownload(String key, String title, List<BiliFavorites.Entry> entries,
+                                        boolean embedDanmaku, boolean audioOnly, int quality) {
         String cookie = account.cookie();
+        if (cookie == null || cookie.isEmpty()) {
+            Toast.makeText(this, "登录后可以下载收藏内容", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        DanmakuStyle.Options options = embedDanmaku && !audioOnly ? DanmakuControls.loadOptions(this) : null;
+        List<BiliClient.Video> videos = new ArrayList<>();
+        for (BiliFavorites.Entry entry : entries) {
+            videos.add(new BiliClient.Video(entry.title(), entry.link(), 0));
+        }
+        BiliClient.Collection collection = new BiliClient.Collection(key, title, videos);
+        enqueue(downloadRequests(collection, videos, quality, options, cookie, audioOnly), videos.size() > 1);
+    }
+
+    private List<Request> downloadRequests(BiliClient.Collection collection, List<BiliClient.Video> videos,
+                                           int preferredQuality, DanmakuStyle.Options options, String cookie,
+                                           boolean audioOnly) {
         VideoHistory.Folder folder = history.folderFor(collection);
         List<Request> requests = new ArrayList<>();
         for (BiliClient.Video video : videos) {
-            var download = new VideoHistory.Download(video.link(), preferredQuality, options != null);
+            var download = new VideoHistory.Download(video.link(), preferredQuality, options != null, audioOnly);
             requests.add(downloadRequest(video.title(), folder, download, options, cookie));
         }
-        enqueue(requests, true);
+        return requests;
+    }
+
+    private void queueVideos(BiliClient.Collection collection, List<BiliClient.Video> videos, int preferredQuality,
+                             DanmakuStyle.Options options, boolean audioOnly) {
+        String cookie = account.cookie();
+        enqueue(downloadRequests(collection, videos, preferredQuality, options, cookie, audioOnly), true);
     }
 
     private Request downloadRequest(String title, VideoHistory.Folder folder, VideoHistory.Download download,
@@ -418,14 +477,15 @@ public final class MainActivity extends AppCompatActivity {
             List<BiliClient.Quality> choices = streams.video();
             BiliClient.Quality quality = download.quality() <= 0 ? choices.get(0) : choices.stream()
                     .filter(choice -> choice.id() <= download.quality()).findFirst().orElse(choices.get(choices.size() - 1));
-            return task.fromLink(streams, quality, options, cookie);
+            return task.fromLink(streams, quality, options, cookie, download.audioOnly());
         });
     }
 
     private void retryDownload(VideoHistory.Entry entry) {
         if (current != null) return;
         VideoHistory.Download download = entry.download();
-        DanmakuStyle.Options options = download.danmaku() ? DanmakuControls.loadOptions(this) : null;
+        DanmakuStyle.Options options = download.danmaku() && !download.audioOnly()
+                ? DanmakuControls.loadOptions(this) : null;
         Request request = downloadRequest(entry.title(), entry.folder(), download, options, account.cookie());
         queue.retry(entry, request);
         requestExportNotifications();
@@ -545,7 +605,7 @@ public final class MainActivity extends AppCompatActivity {
     private void showResult(ExportTask.Result result) {
         lastResult = result;
         statusCard.setVisibility(View.VISIBLE);
-        status.setText(result.burned() ? "已保存弹幕 MP4" : "已保存 MP4");
+        status.setText(result.audio() ? "已保存音频" : result.burned() ? "已保存弹幕 MP4" : "已保存 MP4");
         detail.setVisibility(View.VISIBLE);
         String location = "下载 / " + ExportTask.FOLDER;
         if (result.folder() != null) location += " / " + result.folder();
@@ -556,10 +616,12 @@ public final class MainActivity extends AppCompatActivity {
         cancel.setVisibility(View.GONE);
         background.setVisibility(View.GONE);
         resultActions.setVisibility(View.VISIBLE);
+        openAction.setText(result.audio() ? "打开音频" : "打开视频");
         getPreferences(MODE_PRIVATE).edit()
                 .putString("recentUri", result.uri().toString())
                 .putString("recentName", result.name())
                 .putBoolean("recentBurned", result.burned())
+                .putBoolean("recentAudio", result.audio())
                 .putString("recentFolder", result.folder())
                 .remove("recentComments")
                 .apply();
@@ -576,7 +638,8 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         showResult(new ExportTask.Result(uri, preferences.getString("recentName", "已下载的视频"),
-                preferences.getBoolean("recentBurned", false), null, preferences.getString("recentFolder", null)));
+                preferences.getBoolean("recentBurned", false), null, preferences.getString("recentFolder", null),
+                preferences.getBoolean("recentAudio", false)));
     }
 
     private void openResult(boolean share) {
@@ -610,7 +673,7 @@ public final class MainActivity extends AppCompatActivity {
         var preferences = getPreferences(MODE_PRIVATE);
         if (entry.uri().toString().equals(preferences.getString("recentUri", null))) {
             preferences.edit().remove("recentUri").remove("recentName")
-                    .remove("recentBurned").remove("recentFolder").apply();
+                    .remove("recentBurned").remove("recentAudio").remove("recentFolder").apply();
         }
         caches.refreshResults();
         refreshHistory();
@@ -620,18 +683,22 @@ public final class MainActivity extends AppCompatActivity {
 
     private void openVideo(Uri uri, boolean share) {
         if (!VideoHistory.available(this, uri)) {
-            Toast.makeText(this, "视频文件已移除或无法访问", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "文件已移除或无法访问", Toast.LENGTH_SHORT).show();
             refreshHistory();
             return;
         }
-        Intent intent = share ? new Intent(Intent.ACTION_SEND).setType("video/mp4")
-                .putExtra(Intent.EXTRA_STREAM, uri) : new Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/mp4");
-        intent.setClipData(ClipData.newRawUri("MP4", uri));
+        String type = getContentResolver().getType(uri);
+        if (type == null || !(type.startsWith("audio/") || type.startsWith("video/"))) type = "video/mp4";
+        boolean audio = type.startsWith("audio/");
+        Intent intent = share ? new Intent(Intent.ACTION_SEND).setType(type)
+                .putExtra(Intent.EXTRA_STREAM, uri) : new Intent(Intent.ACTION_VIEW).setDataAndType(uri, type);
+        intent.setClipData(ClipData.newRawUri(audio ? "M4A" : "MP4", uri));
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
-            startActivity(share ? Intent.createChooser(intent, "分享 MP4") : intent);
+            startActivity(share ? Intent.createChooser(intent, audio ? "分享音频" : "分享 MP4") : intent);
         } catch (ActivityNotFoundException error) {
-            Toast.makeText(this, "没有可打开该视频的应用", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, audio ? "没有可打开该音频的应用" : "没有可打开该视频的应用",
+                    Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -671,6 +738,7 @@ public final class MainActivity extends AppCompatActivity {
             state.putParcelable("resultUri", lastResult.uri());
             state.putString("resultName", lastResult.name());
             state.putBoolean("resultBurned", lastResult.burned());
+        state.putBoolean("resultAudio", lastResult.audio());
             state.putString("resultNote", lastResult.note());
             state.putString("resultFolder", lastResult.folder());
         }
@@ -704,6 +772,7 @@ public final class MainActivity extends AppCompatActivity {
         current = null;
         if (aboutPanel != null) aboutPanel.close();
         if (caches != null) caches.close();
+        if (favorites != null) favorites.close();
         if (account != null) account.close();
         if (preview != null) preview.close();
         if (history != null) history.close();
@@ -715,6 +784,14 @@ public final class MainActivity extends AppCompatActivity {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         return layout;
+    }
+
+    void setPageTitle(CharSequence title) {
+        if (page == R.id.nav_favorites) toolbar.setTitle(title);
+    }
+
+    void resetScroll() {
+        scroll.scrollTo(0, 0);
     }
 
     TextView text(String value, int size, boolean secondary) {

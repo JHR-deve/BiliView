@@ -30,7 +30,7 @@ final class VideoHistory extends SQLiteOpenHelper {
 
     record Folder(String key, String title, String directory) {}
 
-    record Download(String link, int quality, boolean danmaku) {}
+    record Download(String link, int quality, boolean danmaku, boolean audioOnly) {}
 
     record Entry(long id, String title, String source, State state, String stage, int percent,
                  Uri uri, String note, boolean burned, long updated, Folder folder, Download download) {
@@ -42,7 +42,7 @@ final class VideoHistory extends SQLiteOpenHelper {
     record CacheResult(Uri uri, boolean confirmed) {}
 
     VideoHistory(Context context) {
-        super(context, "video-history.db", null, 3);
+        super(context, "video-history.db", null, 4);
         this.context = context.getApplicationContext();
     }
 
@@ -51,7 +51,7 @@ final class VideoHistory extends SQLiteOpenHelper {
                 + " state TEXT NOT NULL, stage TEXT, percent INTEGER NOT NULL DEFAULT -1, uri TEXT UNIQUE,"
                 + " note TEXT, burned INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL,"
                 + " folder_key TEXT, folder_title TEXT, directory TEXT, cache_key TEXT,"
-                + " link TEXT, quality INTEGER, danmaku INTEGER)");
+                + " link TEXT, quality INTEGER, danmaku INTEGER, audio_only INTEGER)");
     }
 
     @Override public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
@@ -67,6 +67,9 @@ final class VideoHistory extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE videos ADD COLUMN link TEXT");
             db.execSQL("ALTER TABLE videos ADD COLUMN quality INTEGER");
             db.execSQL("ALTER TABLE videos ADD COLUMN danmaku INTEGER");
+        }
+        if (oldVersion < 4) {
+            db.execSQL("ALTER TABLE videos ADD COLUMN audio_only INTEGER");
         }
     }
 
@@ -87,6 +90,7 @@ final class VideoHistory extends SQLiteOpenHelper {
             values.put("link", download.link());
             values.put("quality", download.quality());
             values.put("danmaku", download.danmaku());
+            values.put("audio_only", download.audioOnly());
         }
         return getWritableDatabase().insertOrThrow(TABLE, null, values);
     }
@@ -170,7 +174,7 @@ final class VideoHistory extends SQLiteOpenHelper {
         List<Entry> entries = new ArrayList<>();
         try (Cursor cursor = getReadableDatabase().query(TABLE,
                 new String[]{"_id", "title", "source", "state", "stage", "percent", "uri", "note", "burned", "updated",
-                        "folder_key", "folder_title", "directory", "link", "quality", "danmaku"},
+                        "folder_key", "folder_title", "directory", "link", "quality", "danmaku", "audio_only"},
                 null, null, null, null,
                 "CASE state WHEN 'RUNNING' THEN 0 WHEN 'QUEUED' THEN 1 ELSE 2 END, "
                         + "CASE WHEN state='QUEUED' THEN updated ELSE -updated END, "
@@ -180,7 +184,7 @@ final class VideoHistory extends SQLiteOpenHelper {
                 Folder folder = cursor.isNull(10) ? null
                         : new Folder(cursor.getString(10), cursor.getString(11), cursor.getString(12));
                 Download download = cursor.isNull(13) ? null
-                        : new Download(cursor.getString(13), cursor.getInt(14), cursor.getInt(15) != 0);
+                        : new Download(cursor.getString(13), cursor.getInt(14), cursor.getInt(15) != 0, cursor.getInt(16) != 0);
                 entries.add(new Entry(cursor.getLong(0), cursor.getString(1), cursor.getString(2),
                         State.valueOf(cursor.getString(3)), cursor.getString(4), cursor.getInt(5),
                         uri == null ? null : Uri.parse(uri), cursor.getString(7), cursor.getInt(8) != 0,

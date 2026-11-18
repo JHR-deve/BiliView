@@ -22,12 +22,13 @@ import java.util.concurrent.Executors;
 
 final class DownloadPreview implements AutoCloseable {
     interface Download {
-        void start(BiliClient.Streams streams, BiliClient.Quality quality, DanmakuStyle.Options options);
+        void start(BiliClient.Streams streams, BiliClient.Quality quality, DanmakuStyle.Options options,
+                   boolean audioOnly);
     }
 
     interface BatchDownload {
         void start(BiliClient.Collection collection, List<BiliClient.Video> videos,
-                   int quality, DanmakuStyle.Options options);
+                   int quality, DanmakuStyle.Options options, boolean audioOnly);
     }
 
     private final MainActivity activity;
@@ -38,6 +39,7 @@ final class DownloadPreview implements AutoCloseable {
     private final TextView duration;
     private final TextView notice;
     private final MaterialButton choose;
+    private final AudioOnlyControl audio;
     private final DanmakuControls danmaku;
     private final MaterialButton download;
     private final LinearLayout collections;
@@ -84,12 +86,15 @@ final class DownloadPreview implements AutoCloseable {
         choose.setOnClickListener(view -> chooseQuality());
         body.addView(choose, activity.spacing(12));
 
+        audio = new AudioOnlyControl(activity, body);
+        audio.onChange(this::updateOutput);
+
         danmaku = new DanmakuControls(activity, body, true);
 
         download = activity.button("下载 MP4", com.google.android.material.R.attr.materialButtonStyle);
         download.setOnClickListener(view -> {
             if (streams != null) {
-                onDownload.start(streams, streams.video().get(selected), danmaku.options());
+                onDownload.start(streams, streams.video().get(selected), danmaku.options(), audio.checked());
             }
         });
         body.addView(download, activity.spacing(10));
@@ -104,10 +109,10 @@ final class DownloadPreview implements AutoCloseable {
         BiliClient.Streams data = inspection.streams();
         streams = data;
         selected = 0;
+        audio.sync();
         notice.setText(inspection.notice());
         notice.setVisibility(inspection.notice() == null ? View.GONE : View.VISIBLE);
         summary.setVisibility(data == null ? View.GONE : View.VISIBLE);
-        choose.setVisibility(data == null ? View.GONE : View.VISIBLE);
         download.setVisibility(data == null ? View.GONE : View.VISIBLE);
         collections.removeAllViews();
         for (BiliClient.Collection collection : inspection.collections()) {
@@ -119,6 +124,7 @@ final class DownloadPreview implements AutoCloseable {
         }
         setBusy(false);
         card.setVisibility(View.VISIBLE);
+        updateOutput();
         if (data == null) return;
         cover.setImageDrawable(null);
         cover.setVisibility(View.GONE);
@@ -146,7 +152,7 @@ final class DownloadPreview implements AutoCloseable {
         }
         BatchPicker.show(activity, collection.title(), collection.videos(), BiliClient.Video::title, current, items -> {
             int quality = streams == null ? -1 : streams.video().get(selected).id();
-            onBatch.start(collection, items, quality, danmaku.options());
+            onBatch.start(collection, items, quality, danmaku.options(), audio.checked());
         });
     }
 
@@ -157,6 +163,7 @@ final class DownloadPreview implements AutoCloseable {
 
     void setBusy(boolean busy) {
         choose.setEnabled(!busy && streams != null && streams.video().size() > 1);
+        audio.setBusy(busy);
         danmaku.setBusy(busy);
         download.setEnabled(!busy && streams != null);
         for (int i = 0; i < collections.getChildCount(); i++) collections.getChildAt(i).setEnabled(!busy);
@@ -179,6 +186,13 @@ final class DownloadPreview implements AutoCloseable {
     private void updateQuality() {
         String label = label(streams.video().get(selected));
         choose.setText("画质  ·  " + label + (streams.video().size() > 1 ? "  ▾" : ""));
+    }
+
+    private void updateOutput() {
+        boolean audioOnly = audio.checked();
+        danmaku.setVisible(!audioOnly);
+        choose.setVisibility(streams != null && !audioOnly ? View.VISIBLE : View.GONE);
+        download.setText(audioOnly ? "下载音频" : "下载 MP4");
     }
 
     private static String label(BiliClient.Quality quality) {

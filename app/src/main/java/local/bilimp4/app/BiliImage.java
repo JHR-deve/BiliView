@@ -2,6 +2,7 @@ package local.bilimp4.app;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.util.LruCache;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -10,7 +11,23 @@ import java.net.URL;
 import java.util.Locale;
 
 final class BiliImage {
+    private static final LruCache<String, Bitmap> CACHE = new LruCache<>(12 * 1024 * 1024) {
+        @Override protected int sizeOf(String key, Bitmap value) {
+            return value.getByteCount();
+        }
+    };
+
     static Bitmap load(String address, int maxEdge) {
+        if (address == null || address.isEmpty()) return null;
+        String key = address + "@" + maxEdge;
+        Bitmap cached = CACHE.get(key);
+        if (cached != null) return cached;
+        Bitmap image = fetch(address, maxEdge);
+        if (image != null) CACHE.put(key, image);
+        return image;
+    }
+
+    private static Bitmap fetch(String address, int maxEdge) {
         HttpURLConnection connection = null;
         try {
             if (address.startsWith("http://")) address = "https://" + address.substring(7);
