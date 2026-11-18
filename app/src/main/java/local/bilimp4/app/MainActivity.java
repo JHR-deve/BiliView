@@ -748,6 +748,7 @@ public final class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        UpdatePrompt.autoCheck(this);
         queue.observe(queueListener);
         if (caches != null) {
             caches.refreshAccess();

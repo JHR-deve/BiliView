@@ -51,7 +51,7 @@ final class UpdatePrompt {
         String notes = release.notes();
         if (notes.length() > 1500) notes = notes.substring(0, 1500).trim() + "…";
         String message = "当前版本 " + BuildConfig.VERSION_NAME + "，最新版本 " + release.version();
-        if (!notes.isEmpty()) message += "\n\n" + notes;
+        message += notes.isEmpty() ? "\n\n更新说明和下载地址可以在发布页查看。" : "\n\n" + notes;
         new MaterialAlertDialogBuilder(activity)
                 .setTitle("发现新版本 " + release.version())
                 .setMessage(message)

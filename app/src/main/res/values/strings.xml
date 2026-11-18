@@ -28,7 +28,7 @@
         <string name="about_update_found">发现新版本 %1$s</string>
             <string name="about_changes_title">本版更新内容</string>
     <string name="about_changes_version">版本 %1$s 更新内容</string>
-    <string name="about_changes_current">• 检查更新改为直接读取 GitHub 发布记录，发现新版本可在应用内下载并安装。\n• 启动后每天自动检查一次，有新版本会弹窗提醒，也可以选择稍后。\n• 侧边栏收藏夹支持逐层浏览、搜索、多选批量下载和画质上限。</string>
+    <string name="about_changes_current">• 检查更新不再依赖 GitHub 接口，改用发布页跳转判断最新版本，避开接口限流。\n• 发现新版本可在应用内下载并安装，安装包会校验 SHA-256。\n• 启动后和回到应用时每天最多自动检查一次，有新版本会弹窗提醒。</string>
     <string name="about_project_title">关于项目</string>
     <string name="about_project">BiliView 是由 JHR-deve 独立开发的 Android 应用。支持通过 B 站链接下载视频，查看合集与分 P 并批量下载，也可只导出音轨为 M4A。登录后可读取收藏夹、追番和追剧并批量下载。还可批量将本地离线缓存转为 MP4。下载和转换时可将滚动弹幕嵌入画面，成品可从下载记录打开或分享。</string>
     <string name="about_access_title">Shizuku 授权</string>

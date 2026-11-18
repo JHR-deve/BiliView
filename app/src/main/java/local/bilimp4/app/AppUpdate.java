@@ -37,32 +37,78 @@ final class AppUpdate {
         void update(int percent, long done, long total);
     }
 
-    static Release latest() throws IOException, JSONException {
-        JSONObject json = fetch(LATEST);
-        String version = version(json.optString("tag_name", json.optString("name")));
-        if (version.isEmpty()) throw new IOException("发布记录里没有可识别的版本号。");
-        String page = json.optString("html_url", PAGE);
-        String apk = null;
-        long size = 0;
-        String digest = null;
-        JSONArray assets = json.optJSONArray("assets");
-        if (assets != null) {
-            for (int i = 0; i < assets.length(); i++) {
-                JSONObject asset = assets.optJSONObject(i);
-                if (asset == null) continue;
-                String name = asset.optString("name");
-                if (!name.toLowerCase(Locale.ROOT).endsWith(".apk")) continue;
-                String url = asset.optString("browser_download_url");
-                if (!secure(url, DOWNLOAD_HOSTS)) continue;
-                apk = url;
-                size = asset.optLong("size");
-                digest = asset.optString("digest", null);
-                break;
-            }
+    static Release latest() throws IOException {
+        Release api = apiRelease();
+        Release tag = tagRelease();
+        if (api == null && tag == null) {
+            throw new IOException("暂时无法获取发布记录，请检查网络后重试。");
         }
-        return new Release(version, json.optString("body", "").trim(), apk, size, digest, page);
+        if (api == null) return tag;
+        if (tag == null) return api;
+        return compare(tag.version(), api.version()) > 0
+                ? new Release(tag.version(), api.notes(), tag.apkUrl(), 0, null, tag.page())
+                : api;
     }
 
+    private static Release apiRelease() {
+        try {
+            JSONObject json = fetch(LATEST);
+            String version = version(json.optString("tag_name", json.optString("name")));
+            if (version.isEmpty()) return null;
+            String page = json.optString("html_url", PAGE);
+            String apk = null;
+            long size = 0;
+            String digest = null;
+            JSONArray assets = json.optJSONArray("assets");
+            if (assets != null) {
+                for (int i = 0; i < assets.length(); i++) {
+                    JSONObject asset = assets.optJSONObject(i);
+                    if (asset == null) continue;
+                    String name = asset.optString("name");
+                    if (!name.toLowerCase(Locale.ROOT).endsWith(".apk")) continue;
+                    String url = asset.optString("browser_download_url");
+                    if (!secure(url, DOWNLOAD_HOSTS)) continue;
+                    apk = url;
+                    size = asset.optLong("size");
+                    digest = asset.optString("digest", null);
+                    break;
+                }
+            }
+            return new Release(version, json.optString("body", "").trim(), apk, size, digest, page);
+        } catch (Exception error) {
+            return null;
+        }
+    }
+
+    // GitHub 的接口对未登录请求限流，这里改用发布页的重定向来确定最新版本。
+    static Release tagRelease() throws IOException {
+        String address = PAGE + "/latest";
+        if (!secure(address, DOWNLOAD_HOSTS)) throw new IOException("更新地址无效。");
+        HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
+        connection.setInstanceFollowRedirects(false);
+        connection.setConnectTimeout(8000);
+        connection.setReadTimeout(8000);
+        connection.setRequestProperty("User-Agent", "BiliView/" + BuildConfig.VERSION_NAME);
+        try {
+            int status = connection.getResponseCode();
+            String location = connection.getHeaderField("Location");
+            if (status < 300 || status >= 400 || location == null) {
+                throw new IOException("暂时无法获取发布记录，请稍后重试。");
+            }
+            String tag = location.substring(location.lastIndexOf('/') + 1);
+            String version = version(tag);
+            if (version.isEmpty() || !secure(location, DOWNLOAD_HOSTS)) {
+                throw new IOException("发布记录里没有可识别的版本号。");
+            }
+            return new Release(version, "", apkAddress(tag, version), 0, null, location);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private static String apkAddress(String tag, String version) {
+        return PAGE + "/download/" + tag + "/BiliView-" + version + "-debug.apk";
+    }
     static boolean newer(String remote) {
         return compare(remote, BuildConfig.VERSION_NAME) > 0;
     }
